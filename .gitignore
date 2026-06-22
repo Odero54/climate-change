@@ -1,4 +1,92 @@
+# ── Secrets & local config ────────────────────────────────────────────────────
 .env
+.env.*
+!.env.example
+secrets.json
+credentials.json
+
+# ── Python build artefacts ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+pip-wheel-metadata/
+wheels/
+
+# ── Virtual environments ──────────────────────────────────────────────────────
 .venv/
-climate_change.egg-info/
+venv/
+env/
+ENV/
+
+# ── Testing & coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# ── Type checkers ────────────────────────────────────────────────────────────
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# ── Linting ───────────────────────────────────────────────────────────────────
+.ruff_cache/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── Exploratory notebooks (not for production) ────────────────────────────────
 experiments/
+
+# ── Raster / GIS outputs ─────────────────────────────────────────────────────
+*.tif
+*.tiff
+*.geotiff
+*.nc
+*.h5
+*.hdf5
+
+# ── ML model artefacts ───────────────────────────────────────────────────────
+*.pt
+*.pth
+*.pkl
+*.pickle
+*.joblib
+models/
+
+# ── Reports & PDFs generated at runtime ──────────────────────────────────────
+reports/
+*.pdf
+
+# ── Logs & temp files ────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ── Cache directories ────────────────────────────────────────────────────────
+/tmp/arin_dss_cache/
+.cache/
+
+# ── IDE / editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln

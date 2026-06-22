@@ -1,14 +1,14 @@
 """Tests for flood/model.py — classify_flood_risk, train_rf, train_xgb, evaluate_models,
 find_best_threshold, compute_uncertainty, build_flood_charts."""
+
 import numpy as np
-import pandas as pd
 import pytest
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from xgboost.sklearn import XGBClassifier
 
-from flood.features import FEATURE_COLS
-from flood.model import (
+from climate_change.flood.features import FEATURE_COLS
+from climate_change.flood.model import (
     VALID_MODEL_TYPES,
     build_flood_charts,
     classify_flood_risk,
@@ -30,6 +30,7 @@ def trained_models(tiny_binary_xy):
 
 
 # ── classify_flood_risk ───────────────────────────────────────────────────────
+
 
 class TestClassifyFloodRisk:
     def test_low_below_25(self):
@@ -64,6 +65,7 @@ class TestClassifyFloodRisk:
 
 # ── train_rf ──────────────────────────────────────────────────────────────────
 
+
 class TestTrainRf:
     def test_returns_rf_and_metadata(self, tiny_binary_xy):
         X, y = tiny_binary_xy
@@ -81,6 +83,7 @@ class TestTrainRf:
 
 # ── train_xgb ─────────────────────────────────────────────────────────────────
 
+
 class TestTrainXgb:
     def test_returns_xgb_and_metadata(self, tiny_binary_xy):
         X, y = tiny_binary_xy
@@ -90,6 +93,7 @@ class TestTrainXgb:
 
 
 # ── find_best_threshold ───────────────────────────────────────────────────────
+
 
 class TestFindBestThreshold:
     def test_returns_threshold_and_f1(self, tiny_binary_xy):
@@ -102,6 +106,7 @@ class TestFindBestThreshold:
 
 
 # ── evaluate_models ───────────────────────────────────────────────────────────
+
 
 class TestEvaluateModels:
     def test_all_keys_present(self, trained_models):
@@ -120,6 +125,7 @@ class TestEvaluateModels:
 
 
 # ── compute_uncertainty ───────────────────────────────────────────────────────
+
 
 class TestComputeUncertainty:
     def test_keys_present(self):
@@ -143,6 +149,7 @@ class TestComputeUncertainty:
 
 
 # ── build_flood_charts ────────────────────────────────────────────────────────
+
 
 class TestBuildFloodCharts:
     def _make_eval_result(self):

@@ -1,12 +1,11 @@
 """Tests for drought/cdi_runner.py — pure utility functions (no GEE)."""
+
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
 
-from drought.cdi_runner import (
-    CDI_SCALE,
-    DROUGHT_CLASS_COLORS,
+from climate_change.drought.cdi_runner import (
     _classify_cdi_value,
     _normalize_drought_class,
     _temporally_fill_dataframe,
@@ -14,20 +13,23 @@ from drought.cdi_runner import (
     compute_spatial_uncertainty,
 )
 
-
 # ── _classify_cdi_value ───────────────────────────────────────────────────────
 
+
 class TestClassifyCdiValue:
-    @pytest.mark.parametrize("value,expected", [
-        (0.3,  "Extreme drought"),
-        (0.55, "Severe drought"),
-        (0.72, "Moderate drought"),
-        (0.85, "Mild drought"),
-        (1.0,  "Near normal"),
-        (1.15, "Mild wet"),
-        (1.25, "Moderately wet"),
-        (1.5,  "Very wet"),
-    ])
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (0.3, "Extreme drought"),
+            (0.55, "Severe drought"),
+            (0.72, "Moderate drought"),
+            (0.85, "Mild drought"),
+            (1.0, "Near normal"),
+            (1.15, "Mild wet"),
+            (1.25, "Moderately wet"),
+            (1.5, "Very wet"),
+        ],
+    )
     def test_classification(self, value, expected):
         assert _classify_cdi_value(value) == expected
 
@@ -40,21 +42,26 @@ class TestClassifyCdiValue:
 
 # ── _normalize_drought_class ──────────────────────────────────────────────────
 
+
 class TestNormalizeDroughtClass:
-    @pytest.mark.parametrize("raw,expected", [
-        ("normal/wet",   "Near normal"),
-        ("near normal",  "Near normal"),
-        ("mild wet",     "Mild wet"),
-        ("MILD WET",     "Mild wet"),      # case-insensitive? no — but raw is .lower()
-        ("extreme drought", "Extreme drought"),
-        ("severe drought",  "Severe drought"),
-        ("unknown label",   "unknown label"),
-    ])
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("normal/wet", "Near normal"),
+            ("near normal", "Near normal"),
+            ("mild wet", "Mild wet"),
+            ("MILD WET", "Mild wet"),  # case-insensitive? no — but raw is .lower()
+            ("extreme drought", "Extreme drought"),
+            ("severe drought", "Severe drought"),
+            ("unknown label", "unknown label"),
+        ],
+    )
     def test_normalisation(self, raw, expected):
         assert _normalize_drought_class(raw) == expected
 
 
 # ── _temporally_fill_dataframe ────────────────────────────────────────────────
+
 
 class TestTemporallyFillDataframe:
     def _make_df(self, with_nan=True):
@@ -85,6 +92,7 @@ class TestTemporallyFillDataframe:
 
 
 # ── build_drought_charts ──────────────────────────────────────────────────────
+
 
 def _make_features(n_months=60, n_time=5, n_lon=4, n_lat=3):
     idx = pd.date_range("2019-01-01", periods=n_months, freq="MS")
@@ -139,12 +147,19 @@ class TestBuildDroughtCharts:
 
 # ── compute_spatial_uncertainty ───────────────────────────────────────────────
 
+
 class TestComputeSpatialUncertainty:
     def test_keys_present(self):
         features = _make_features()
         result = compute_spatial_uncertainty(features)
-        for key in ("lons", "lats", "temporal_std", "component_spread",
-                    "temporal_std_stats", "component_spread_stats"):
+        for key in (
+            "lons",
+            "lats",
+            "temporal_std",
+            "component_spread",
+            "temporal_std_stats",
+            "component_spread_stats",
+        ):
             assert key in result
 
     def test_stats_have_min_max_mean(self):

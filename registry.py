@@ -67,9 +67,7 @@ USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
         model_options=[
             ModelOption("rf", "Random Forest", True, "Fastest · most interpretable"),
             ModelOption("xgboost", "XGBoost", False, "Higher accuracy · longer run"),
-            ModelOption(
-                "ensemble", "Ensemble (RF + XGBoost)", False, "Best overall · slowest"
-            ),
+            ModelOption("ensemble", "Ensemble (RF + XGBoost)", False, "Best overall · slowest"),
         ],
         default_model="rf",
     ),
@@ -111,9 +109,7 @@ USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
         model_options=[
             ModelOption("rf", "Random Forest", True, "Fast · interpretable"),
             ModelOption("xgboost", "XGBoost", False, "High accuracy · longer run"),
-            ModelOption(
-                "ensemble", "Ensemble (RF + XGBoost)", False, "Best overall · slower"
-            ),
+            ModelOption("ensemble", "Ensemble (RF + XGBoost)", False, "Best overall · slower"),
         ],
         default_model="rf",
     ),
@@ -238,8 +234,7 @@ USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
         model_accuracy="CDI validated against PDSI benchmarks; r=0.91 on African drought events",
         output_type="Annual CDI maps + CDI sub-index time-series chart + 6-month LSTM forecast",
         date_guidance=(
-            "Select 10–30 years for climatological baseline. "
-            "Minimum 5 years for trend detection."
+            "Select 10–30 years for climatological baseline. Minimum 5 years for trend detection."
         ),
         min_months=60,
         max_years=30,
@@ -264,7 +259,5 @@ USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
 
 def get_use_case_info(module_id: str) -> UseCaseInfo:
     if module_id not in USE_CASE_REGISTRY:
-        raise KeyError(
-            f"Unknown module: '{module_id}'. Available: {sorted(USE_CASE_REGISTRY)}"
-        )
+        raise KeyError(f"Unknown module: '{module_id}'. Available: {sorted(USE_CASE_REGISTRY)}")
     return USE_CASE_REGISTRY[module_id]

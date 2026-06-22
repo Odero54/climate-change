@@ -4,7 +4,6 @@ import logging
 import os
 import traceback
 
-import ee
 from dask.distributed import as_completed as dask_as_completed
 
 from climate_change.core.base_use_case import (
@@ -242,9 +241,7 @@ class LandDegradationUseCase(BaseUseCase):
         client = DaskEngine.get_client()
         n = len(configs)
         results: list[dict | None] = [None] * n
-        idx_map = {
-            client.submit(self.run, cfg, pure=False): i for i, cfg in enumerate(configs)
-        }
+        idx_map = {client.submit(self.run, cfg, pure=False): i for i, cfg in enumerate(configs)}
         for future in dask_as_completed(idx_map):
             idx = idx_map[future]
             try:

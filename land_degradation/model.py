@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Optional, cast
+from typing import cast
 
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import ruptures as rpt
-import shap
 from ruptures.utils import sanity_check
 from scipy import stats
 from sklearn.ensemble import RandomForestClassifier
@@ -103,6 +102,8 @@ def compute_shap_importance(
     TreeExplainer SHAP values sorted by descending mean |SHAP|.
     For multi-output (RF), averages across classes.
     """
+    import shap
+
     X_df = pd.DataFrame(X_test, columns=FEATURE_COLS)
     explainer = shap.TreeExplainer(model)
     shap_vals = explainer.shap_values(X_df)
@@ -239,9 +240,9 @@ class LandDegradationModel:
     """
 
     def __init__(self) -> None:
-        self.rf: Optional[RandomForestClassifier] = None
-        self.lgbm: Optional[lgb.LGBMClassifier] = None
-        self.scaler: Optional[StandardScaler] = None
+        self.rf: RandomForestClassifier | None = None
+        self.lgbm: lgb.LGBMClassifier | None = None
+        self.scaler: StandardScaler | None = None
 
     def predict(
         self,
@@ -265,15 +266,9 @@ class LandDegradationModel:
         scale = int(cfg.get("scale", 1000))
 
         if model_type not in VALID_MODEL_TYPES:
-            raise ValueError(
-                f"model_type must be one of {VALID_MODEL_TYPES}, got '{model_type}'"
-            )
+            raise ValueError(f"model_type must be one of {VALID_MODEL_TYPES}, got '{model_type}'")
 
-        X = (
-            df[FEATURE_COLS]
-            .fillna(df[FEATURE_COLS].median())
-            .to_numpy(dtype=np.float64)
-        )
+        X = df[FEATURE_COLS].fillna(df[FEATURE_COLS].median()).to_numpy(dtype=np.float64)
         y = df["deg_class"].to_numpy(dtype=np.intp)
 
         X_train, X_test, y_train, y_test = train_test_split(
@@ -291,9 +286,7 @@ class LandDegradationModel:
         if client is not None:
             f_rf = client.submit(train_rf, X_train_s, y_train, pure=False)
             f_lgbm = client.submit(train_lgbm, X_train_s, y_train, pure=False)
-            (self.rf, rf_meta), (self.lgbm, lgbm_meta) = cast(
-                list, client.gather([f_rf, f_lgbm])
-            )
+            (self.rf, rf_meta), (self.lgbm, lgbm_meta) = cast(list, client.gather([f_rf, f_lgbm]))
         else:
             self.rf, rf_meta = train_rf(X_train_s, y_train)
             self.lgbm, lgbm_meta = train_lgbm(X_train_s, y_train)
@@ -330,9 +323,7 @@ class LandDegradationModel:
         }
 
         X_all_s = self.scaler.transform(
-            df[FEATURE_COLS]
-            .fillna(df[FEATURE_COLS].median())
-            .to_numpy(dtype=np.float64)
+            df[FEATURE_COLS].fillna(df[FEATURE_COLS].median()).to_numpy(dtype=np.float64)
         )
         if model_type == "rf":
             all_preds = np.asarray(self.rf.predict(X_all_s)).astype(int)

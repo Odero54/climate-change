@@ -1,7 +1,6 @@
 """Tests for flood/features.py — pure utility functions (no GEE)."""
-import pytest
 
-from flood.features import (
+from climate_change.flood.features import (
     FEATURE_COLS,
     RISK_INT,
     _is_gee_download_too_large,
@@ -44,11 +43,15 @@ class TestIsGeeDownloadTooLarge:
 
     def test_getpixels_url_with_400_returns_true(self):
         exc = Exception("400 error")
-        mock_response = type("R", (), {
-            "status_code": 400,
-            "url": "https://earthengine.googleapis.com/v1/projects/x/image:getPixels",
-            "text": "",
-        })()
+        mock_response = type(
+            "R",
+            (),
+            {
+                "status_code": 400,
+                "url": "https://earthengine.googleapis.com/v1/projects/x/image:getPixels",
+                "text": "",
+            },
+        )()
         exc.response = mock_response
         assert _is_gee_download_too_large(exc) is True
 

@@ -46,15 +46,13 @@ def export_degradation_cog(
 
     # Build feature matrix in FEATURE_COLS order
     feat_arrays: dict[str, np.ndarray] = {}
-    for key, ds in aligned.items():
+    for _key, ds in aligned.items():
         for var in ds.data_vars:
             col = "land_cover" if var == "Map" else str(var)
             if col in FEATURE_COLS:
                 feat_arrays[col] = ds[var].values.ravel()
 
-    X = np.column_stack(
-        [feat_arrays.get(c, np.full(n_px, np.nan)) for c in FEATURE_COLS]
-    )
+    X = np.column_stack([feat_arrays.get(c, np.full(n_px, np.nan)) for c in FEATURE_COLS])
     valid_mask = ~np.any(np.isnan(X), axis=1)
     X_valid = scaler.transform(X[valid_mask])
 
@@ -86,9 +84,7 @@ def export_degradation_cog(
         coords={"lat": lat, "lon": lon},
         name="degradation_class",
     )
-    da.attrs.update(
-        {"long_name": "Degradation class (0=Not Degraded, 1=Degraded)", "nodata": -1}
-    )
+    da.attrs.update({"long_name": "Degradation class (0=Not Degraded, 1=Degraded)", "nodata": -1})
     da = da.rio.set_spatial_dims(x_dim="lon", y_dim="lat")
     da = da.rio.write_crs("EPSG:4326")
     da = da.rio.set_nodata(-1)

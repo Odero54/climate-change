@@ -6,7 +6,6 @@ import traceback
 
 _log = logging.getLogger(__name__)
 
-import ee
 import numpy as np
 from dask.distributed import as_completed as dask_as_completed
 
@@ -43,9 +42,7 @@ def _aoi_area_ha(aoi_geojson: dict | None) -> float | None:
         area_m2, _ = Geod(ellps="WGS84").geometry_area_perimeter(geom)
         return abs(float(area_m2)) / 10_000.0
     except Exception:
-        _log.warning(
-            "AOI area calculation failed; area stats will be omitted", exc_info=True
-        )
+        _log.warning("AOI area calculation failed; area stats will be omitted", exc_info=True)
         return None
 
 
@@ -305,9 +302,7 @@ class FoodSecurityUseCase(BaseUseCase):
             "valid_pixel_count": int(spatial_grid["valid_pixel_count"]),
         }
         if total_area_ha:
-            areas = [
-                round(total_area_ha * (float(pct) / 100.0), 2) for pct in percentages
-            ]
+            areas = [round(total_area_ha * (float(pct) / 100.0), 2) for pct in percentages]
             risk_dist["area_ha"] = areas
             risk_dist["data_ha"] = areas
 
@@ -327,9 +322,7 @@ class FoodSecurityUseCase(BaseUseCase):
         try:
             from rasterio.features import shapes
         except ImportError:
-            _log.warning(
-                "rasterio not available; food-security GeoJSON features will be empty"
-            )
+            _log.warning("rasterio not available; food-security GeoJSON features will be empty")
             return []
 
         risk_grid = np.asarray(spatial_grid["risk_grid"], dtype=np.uint8)
@@ -337,9 +330,7 @@ class FoodSecurityUseCase(BaseUseCase):
         labels = {1: "Low Risk", 2: "Medium Risk", 3: "High Risk"}
         colors = {1: "#184c09", 2: "#ffcc36", 3: "#f22d06"}
         features = []
-        for geom, value in shapes(
-            risk_grid, mask=mask, transform=spatial_grid["transform"]
-        ):
+        for geom, value in shapes(risk_grid, mask=mask, transform=spatial_grid["transform"]):
             code = int(value)
             if code == 0:
                 continue
@@ -376,9 +367,7 @@ class FoodSecurityUseCase(BaseUseCase):
         client = DaskEngine.get_client()
         n = len(configs)
         results: list[dict | None] = [None] * n
-        idx_map = {
-            client.submit(self.run, cfg, pure=False): i for i, cfg in enumerate(configs)
-        }
+        idx_map = {client.submit(self.run, cfg, pure=False): i for i, cfg in enumerate(configs)}
         for future in dask_as_completed(idx_map):
             idx = idx_map[future]
             try:

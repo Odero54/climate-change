@@ -170,8 +170,7 @@ def build_flood_prompt(output: AnalysisOutput) -> str:
     risk_note = ""
     if risk_dist.get("labels") and risk_dist.get("data"):
         risk_note = "\nRISK CLASS DISTRIBUTION: " + ", ".join(
-            f"{lbl}: {pct:.1f}%"
-            for lbl, pct in zip(risk_dist["labels"], risk_dist["data"])
+            f"{lbl}: {pct:.1f}%" for lbl, pct in zip(risk_dist["labels"], risk_dist["data"])
         )
 
     # Top SHAP driver
@@ -181,18 +180,14 @@ def build_flood_prompt(output: AnalysisOutput) -> str:
         driver_note = f"\nTOP FLOOD DRIVER: {shap['features'][0]}"
         if shap.get("mean_abs_shap"):
             top3 = list(zip(shap["features"][:3], shap["mean_abs_shap"][:3]))
-            driver_note += " | Top-3 SHAP: " + ", ".join(
-                f"{f} ({v:.3f})" for f, v in top3
-            )
+            driver_note += " | Top-3 SHAP: " + ", ".join(f"{f} ({v:.3f})" for f, v in top3)
 
     # Model uncertainty
     uncertainty_note = ""
     mean_spread = stats.get("mean_spread")
     high_unc_pct = stats.get("high_uncertainty_pct")
     if mean_spread is not None:
-        uncertainty_note = (
-            f"\nMODEL UNCERTAINTY: mean RF–XGBoost spread = {mean_spread:.3f}"
-        )
+        uncertainty_note = f"\nMODEL UNCERTAINTY: mean RF–XGBoost spread = {mean_spread:.3f}"
         if high_unc_pct is not None:
             uncertainty_note += f"; {high_unc_pct:.1f}% of pixels are high-uncertainty"
 
@@ -220,8 +215,7 @@ def build_land_degradation_prompt(output: AnalysisOutput) -> str:
     dist_note = ""
     if risk_dist.get("labels") and risk_dist.get("data"):
         dist_note = "\nDEGRADATION DISTRIBUTION: " + ", ".join(
-            f"{lbl}: {pct:.1f}%"
-            for lbl, pct in zip(risk_dist["labels"], risk_dist["data"])
+            f"{lbl}: {pct:.1f}%" for lbl, pct in zip(risk_dist["labels"], risk_dist["data"])
         )
 
     # NDVI trend
@@ -231,12 +225,8 @@ def build_land_degradation_prompt(output: AnalysisOutput) -> str:
     mk_sig = trend.get("mk_significant") or stats.get("mk_significant")
     if slope is not None:
         direction = "declining" if slope < 0 else "improving"
-        significance = (
-            "statistically significant" if mk_sig else "not statistically significant"
-        )
-        trend_note = (
-            f"\nNDVI TREND: {slope:+.4f} NDVI units/year ({direction}; {significance})"
-        )
+        significance = "statistically significant" if mk_sig else "not statistically significant"
+        trend_note = f"\nNDVI TREND: {slope:+.4f} NDVI units/year ({direction}; {significance})"
 
     # Breakpoint years
     bkp_years = trend.get("breakpoint_years") or stats.get("breakpoint_years", [])
@@ -251,9 +241,7 @@ def build_land_degradation_prompt(output: AnalysisOutput) -> str:
         driver_note = f"\nTOP DEGRADATION DRIVER: {shap['features'][0]}"
         if shap.get("mean_abs_shap"):
             top3 = list(zip(shap["features"][:3], shap["mean_abs_shap"][:3]))
-            driver_note += " | Top-3 SHAP: " + ", ".join(
-                f"{f} ({v:.3f})" for f, v in top3
-            )
+            driver_note += " | Top-3 SHAP: " + ", ".join(f"{f} ({v:.3f})" for f, v in top3)
 
     # Selected model performance
     perf_note = ""
@@ -275,8 +263,7 @@ def build_disease_prompt(output: AnalysisOutput) -> str:
     risk_note = ""
     if risk_dist.get("labels") and risk_dist.get("data"):
         risk_note = "\nRISK CLASS DISTRIBUTION: " + ", ".join(
-            f"{lbl}: {pct:.1f}%"
-            for lbl, pct in zip(risk_dist["labels"], risk_dist["data"])
+            f"{lbl}: {pct:.1f}%" for lbl, pct in zip(risk_dist["labels"], risk_dist["data"])
         )
 
     cluster_note = ""
@@ -293,9 +280,7 @@ def build_disease_prompt(output: AnalysisOutput) -> str:
         driver_note = f"\nTOP DISEASE DRIVER: {shap['features'][0]}"
         if shap.get("mean_abs_shap"):
             top3 = list(zip(shap["features"][:3], shap["mean_abs_shap"][:3]))
-            driver_note += " | Top-3 SHAP: " + ", ".join(
-                f"{f} ({v:.3f})" for f, v in top3
-            )
+            driver_note += " | Top-3 SHAP: " + ", ".join(f"{f} ({v:.3f})" for f, v in top3)
 
     perf_note = ""
     model_type = stats.get("model_type", "gbm")
@@ -328,16 +313,13 @@ def build_food_security_prompt(output: AnalysisOutput) -> str:
         if vhi is not None:
             parts.append(f"VHI = {vhi:.2f}")
         index_note = "\nVEGETATION HEALTH INDICES (area mean): " + ", ".join(parts)
-        index_note += (
-            "\n(VHI = 0.5×VCI + 0.5×TCI; < 0.35 indicates food insecurity stress)"
-        )
+        index_note += "\n(VHI = 0.5×VCI + 0.5×TCI; < 0.35 indicates food insecurity stress)"
 
     risk_dist = charts.get("riskDist", {})
     risk_note = ""
     if risk_dist.get("labels") and risk_dist.get("data"):
         risk_note = "\nRISK CLASS DISTRIBUTION: " + ", ".join(
-            f"{lbl}: {pct:.1f}%"
-            for lbl, pct in zip(risk_dist["labels"], risk_dist["data"])
+            f"{lbl}: {pct:.1f}%" for lbl, pct in zip(risk_dist["labels"], risk_dist["data"])
         )
 
     trend_note = ""
@@ -352,9 +334,7 @@ def build_food_security_prompt(output: AnalysisOutput) -> str:
         driver_note = f"\nTOP FOOD SECURITY DRIVER: {shap['features'][0]}"
         if shap.get("mean_abs_shap"):
             top3 = list(zip(shap["features"][:3], shap["mean_abs_shap"][:3]))
-            driver_note += " | Top-3 SHAP: " + ", ".join(
-                f"{f} ({v:.3f})" for f, v in top3
-            )
+            driver_note += " | Top-3 SHAP: " + ", ".join(f"{f} ({v:.3f})" for f, v in top3)
 
     perf_note = ""
     model_type = stats.get("model_type", "rf")

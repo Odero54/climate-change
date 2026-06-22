@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Optional, cast
+from typing import cast
 
 import numpy as np
 import pandas as pd
-import shap
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     f1_score,
@@ -142,6 +141,8 @@ def compute_shap_importance(xgb: XGBClassifier, X_test: np.ndarray) -> dict:
     XGBoost is always used for SHAP regardless of model_type — it provides
     the most interpretable tree-based explanations.
     """
+    import shap
+
     explainer = shap.TreeExplainer(xgb)
     shap_vals = explainer.shap_values(X_test)
     mean_abs = np.abs(shap_vals).mean(axis=0)
@@ -248,8 +249,8 @@ class FloodModel:
     """
 
     def __init__(self) -> None:
-        self.rf: Optional[RandomForestClassifier] = None
-        self.xgb: Optional[XGBClassifier] = None
+        self.rf: RandomForestClassifier | None = None
+        self.xgb: XGBClassifier | None = None
 
     def predict(self, df: pd.DataFrame, config: dict | None = None) -> dict:
         """
@@ -264,9 +265,7 @@ class FloodModel:
         """
         model_type = (config or {}).get("model_type", "ensemble")
         if model_type not in VALID_MODEL_TYPES:
-            raise ValueError(
-                f"model_type must be one of {VALID_MODEL_TYPES}, got '{model_type}'"
-            )
+            raise ValueError(f"model_type must be one of {VALID_MODEL_TYPES}, got '{model_type}'")
 
         X = df[FEATURE_COLS].to_numpy(dtype=np.float64)
         y = df["is_flooded"].to_numpy(dtype=np.intp)
@@ -282,12 +281,8 @@ class FloodModel:
         client = DaskEngine.get_client_if_running()
         if client is not None:
             f_rf = client.submit(train_rf, X_train, y_train, pure=False)
-            f_xgb = client.submit(
-                train_xgb, X_train, y_train, X_test, y_test, pure=False
-            )
-            (self.rf, rf_meta), (self.xgb, xgb_meta) = cast(
-                list, client.gather([f_rf, f_xgb])
-            )
+            f_xgb = client.submit(train_xgb, X_train, y_train, X_test, y_test, pure=False)
+            (self.rf, rf_meta), (self.xgb, xgb_meta) = cast(list, client.gather([f_rf, f_xgb]))
         else:
             self.rf, rf_meta = train_rf(X_train, y_train)
             self.xgb, xgb_meta = train_xgb(X_train, y_train, X_test, y_test)

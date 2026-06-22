@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import traceback
 
-import ee
 from dask.distributed import as_completed as dask_as_completed
 
 from climate_change.core.base_use_case import (
@@ -150,16 +149,13 @@ class FloodRiskUseCase(BaseUseCase):
             "raster": raster_paths or {},
             "windows": {
                 "pre_flood": {
-                    "start": dict_config.get("pre_flood_start")
-                    or dict_config.get("pre_sar_start"),
-                    "end": dict_config.get("pre_flood_end")
-                    or dict_config.get("pre_sar_end"),
+                    "start": dict_config.get("pre_flood_start") or dict_config.get("pre_sar_start"),
+                    "end": dict_config.get("pre_flood_end") or dict_config.get("pre_sar_end"),
                 },
                 "post_flood": {
                     "start": dict_config.get("post_flood_start")
                     or dict_config.get("flood_sar_start"),
-                    "end": dict_config.get("post_flood_end")
-                    or dict_config.get("flood_sar_end"),
+                    "end": dict_config.get("post_flood_end") or dict_config.get("flood_sar_end"),
                 },
                 "rainfall_7d": {
                     "start": dict_config.get("rain_7d_start"),
@@ -324,9 +320,7 @@ class FloodRiskUseCase(BaseUseCase):
         client = DaskEngine.get_client()
         n = len(configs)
         results: list[dict | None] = [None] * n
-        idx_map = {
-            client.submit(self.run, cfg, pure=False): i for i, cfg in enumerate(configs)
-        }
+        idx_map = {client.submit(self.run, cfg, pure=False): i for i, cfg in enumerate(configs)}
         for future in dask_as_completed(idx_map):
             idx = idx_map[future]
             try:

@@ -79,15 +79,13 @@ def export_disease_cog(
     elif model_type == "xgboost":
         proba = xgb_model.predict_proba(X_valid)
     else:  # ensemble
-        proba = (
-            gbm_model.predict_proba(X_valid) + xgb_model.predict_proba(X_valid)
-        ) / 2.0
+        proba = (gbm_model.predict_proba(X_valid) + xgb_model.predict_proba(X_valid)) / 2.0
 
     pred_classes = np.argmax(proba, axis=1).astype(np.uint8) + 1  # 1-indexed
 
     transform = elev_ds["elevation"].rio.transform()
     crs = elev_ds["elevation"].rio.crs or "EPSG:4326"
-    risk_grid = np.zeros(n_lat * n_lon, dtype=np.uint8)
+    risk_grid: np.ndarray = np.zeros(n_lat * n_lon, dtype=np.uint8)
     risk_grid[valid_mask] = pred_classes
     risk_grid = risk_grid.reshape(n_lat, n_lon)
     if aoi_geojson:

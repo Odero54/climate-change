@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Optional, cast
+from typing import cast
 
 import numpy as np
 import pandas as pd
-import shap
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
@@ -107,6 +106,8 @@ def compute_shap_importance(xgb: XGBClassifier, X_test: np.ndarray) -> dict:
     TreeExplainer SHAP on XGBoost (always used for SHAP regardless of model_type).
     Returns features sorted by descending mean |SHAP| averaged across all classes.
     """
+    import shap
+
     X_df = pd.DataFrame(X_test, columns=FEATURE_COLS)
     explainer = shap.TreeExplainer(xgb)
     shap_vals = explainer.shap_values(X_df)
@@ -210,9 +211,9 @@ class FoodSecurityModel:
     """
 
     def __init__(self) -> None:
-        self.rf: Optional[RandomForestClassifier] = None
-        self.xgb: Optional[XGBClassifier] = None
-        self.scaler: Optional[StandardScaler] = None
+        self.rf: RandomForestClassifier | None = None
+        self.xgb: XGBClassifier | None = None
+        self.scaler: StandardScaler | None = None
 
     def predict(
         self,
@@ -236,18 +237,12 @@ class FoodSecurityModel:
         cfg = config or {}
         model_type = cfg.get("model_type", "rf")
         if model_type not in VALID_MODEL_TYPES:
-            raise ValueError(
-                f"model_type must be one of {VALID_MODEL_TYPES}, got '{model_type}'"
-            )
+            raise ValueError(f"model_type must be one of {VALID_MODEL_TYPES}, got '{model_type}'")
 
         _ndvi = ndvi_df if ndvi_df is not None else pd.DataFrame()
         _rain = rain_df if rain_df is not None else pd.DataFrame()
 
-        X = (
-            df[FEATURE_COLS]
-            .fillna(df[FEATURE_COLS].median())
-            .to_numpy(dtype=np.float64)
-        )
+        X = df[FEATURE_COLS].fillna(df[FEATURE_COLS].median()).to_numpy(dtype=np.float64)
         y = df["label"].to_numpy(dtype=np.intp)
 
         X_train, X_test, y_train, y_test = train_test_split(
@@ -265,9 +260,7 @@ class FoodSecurityModel:
         if client is not None:
             f_rf = client.submit(train_rf, X_train_s, y_train, pure=False)
             f_xgb = client.submit(train_xgb, X_train_s, y_train, pure=False)
-            (self.rf, rf_meta), (self.xgb, xgb_meta) = cast(
-                list, client.gather([f_rf, f_xgb])
-            )
+            (self.rf, rf_meta), (self.xgb, xgb_meta) = cast(list, client.gather([f_rf, f_xgb]))
         else:
             self.rf, rf_meta = train_rf(X_train_s, y_train)
             self.xgb, xgb_meta = train_xgb(X_train_s, y_train)
@@ -296,9 +289,7 @@ class FoodSecurityModel:
 
         # Risk distribution on all pixels using selected model
         X_all_s = self.scaler.transform(
-            df[FEATURE_COLS]
-            .fillna(df[FEATURE_COLS].median())
-            .to_numpy(dtype=np.float64)
+            df[FEATURE_COLS].fillna(df[FEATURE_COLS].median()).to_numpy(dtype=np.float64)
         )
         _KEY = {"rf": "rf", "xgboost": "xgb", "ensemble": "ensemble"}
         result_key = _KEY.get(model_type, "rf")
@@ -308,9 +299,7 @@ class FoodSecurityModel:
         elif model_type == "xgboost":
             all_preds = self.xgb.predict(X_all_s).astype(int)
         else:
-            proba = (
-                self.rf.predict_proba(X_all_s) + self.xgb.predict_proba(X_all_s)
-            ) / 2.0
+            proba = (self.rf.predict_proba(X_all_s) + self.xgb.predict_proba(X_all_s)) / 2.0
             all_preds = np.argmax(proba, axis=1).astype(int)
 
         n_total = len(all_preds)

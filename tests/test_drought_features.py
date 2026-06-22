@@ -1,10 +1,10 @@
 """Tests for drought/features.py — build_features, DroughtSequenceDataset, prepare_datasets."""
+
 import numpy as np
 import pandas as pd
-import pytest
 import torch
 
-from drought.features import (
+from climate_change.drought.features import (
     FORECAST_H,
     INPUT_COLS,
     SEQ_LEN,
@@ -13,8 +13,8 @@ from drought.features import (
     prepare_datasets,
 )
 
-
 # ── build_features ─────────────────────────────────────────────────────────────
+
 
 class TestBuildFeatures:
     def test_returns_dataframe_with_expected_columns(self, cdi_dataframe):
@@ -46,6 +46,7 @@ class TestBuildFeatures:
 
 
 # ── DroughtSequenceDataset ─────────────────────────────────────────────────────
+
 
 class TestDroughtSequenceDataset:
     def _make_dataset(self, n=100, seq_len=SEQ_LEN, horizon=FORECAST_H):
@@ -83,6 +84,7 @@ class TestDroughtSequenceDataset:
 
 
 # ── prepare_datasets ──────────────────────────────────────────────────────────
+
 
 class TestPrepareDatasets:
     def test_returns_four_elements(self, cdi_dataframe):

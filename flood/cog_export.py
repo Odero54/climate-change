@@ -18,7 +18,7 @@ from .model import VALID_MODEL_TYPES, classify_flood_risk
 _log = logging.getLogger(__name__)
 
 RISK_ORDER = ("Very High", "High", "Medium", "Low")
-RISK_VALUE_BY_LABEL = {label: value for label, value in RISK_INT.items()}
+RISK_VALUE_BY_LABEL = dict(RISK_INT)
 RISK_LABEL_BY_VALUE = {value: label for label, value in RISK_INT.items()}
 
 
@@ -28,13 +28,11 @@ def flood_raster_distribution(path: str | Path) -> dict:
 
     valid_values = data[data > 0]
     counts = {
-        label: int((valid_values == RISK_VALUE_BY_LABEL[label]).sum())
-        for label in RISK_ORDER
+        label: int((valid_values == RISK_VALUE_BY_LABEL[label]).sum()) for label in RISK_ORDER
     }
     total = int(valid_values.size)
     percentages = {
-        label: round((count / total * 100), 1) if total else 0.0
-        for label, count in counts.items()
+        label: round((count / total * 100), 1) if total else 0.0 for label, count in counts.items()
     }
     return {
         "labels": list(RISK_ORDER),
@@ -59,9 +57,7 @@ def export_flood_cog(
     and write a Cloud Optimised GeoTIFF.
     """
     if model_type not in VALID_MODEL_TYPES:
-        raise ValueError(
-            f"model_type must be one of {VALID_MODEL_TYPES}, got '{model_type}'"
-        )
+        raise ValueError(f"model_type must be one of {VALID_MODEL_TYPES}, got '{model_type}'")
 
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
@@ -85,12 +81,8 @@ def export_flood_cog(
     landcover_ = aligned["landcover"]["Map"].values.astype(np.float32)
     landcover_ = (landcover_ / 10.0) - 1.0  # normalise: match §8
 
-    lon_grid = np.broadcast_to(ref_lon.values[np.newaxis, :], (n_lat, n_lon)).astype(
-        np.float32
-    )
-    lat_grid = np.broadcast_to(ref_lat.values[:, np.newaxis], (n_lat, n_lon)).astype(
-        np.float32
-    )
+    lon_grid = np.broadcast_to(ref_lon.values[np.newaxis, :], (n_lat, n_lon)).astype(np.float32)
+    lat_grid = np.broadcast_to(ref_lat.values[:, np.newaxis], (n_lat, n_lon)).astype(np.float32)
 
     # Stack → (n_pixels, n_features) and mask nodata
     bands = np.stack(
@@ -126,7 +118,7 @@ def export_flood_cog(
     X_valid = X_full[valid_mask]
 
     # Inference — route by model_type
-    risk_grid = np.zeros(n_lat * n_lon, dtype=np.uint8)
+    risk_grid: np.ndarray = np.zeros(n_lat * n_lon, dtype=np.uint8)
     if X_valid.size:
         prob_rf = rf_model.predict_proba(X_valid)[:, 1]
         prob_xgb = xgb_model.predict_proba(X_valid)[:, 1]

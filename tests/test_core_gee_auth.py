@@ -1,10 +1,10 @@
 """Tests for core/gee_auth.py."""
-import os
-from unittest.mock import MagicMock, patch
+
+from unittest.mock import patch
 
 import pytest
 
-from core.gee_auth import _resolve_project, validate_gee_project
+from climate_change.core.gee_auth import _resolve_project, validate_gee_project
 
 
 class TestResolveProject:
@@ -38,37 +38,46 @@ class TestValidateGeeProject:
             validate_gee_project("   ")
 
     def test_valid_project_calls_ensure_gee(self):
-        with patch("core.gee_auth.ensure_gee") as mock_ensure:
+        with patch("climate_change.core.gee_auth.ensure_gee") as mock_ensure:
             validate_gee_project("my-project")
         mock_ensure.assert_called_once_with("my-project", allow_prompt=False)
 
     def test_ensure_gee_failure_raises_runtime_error(self):
-        with patch("core.gee_auth.ensure_gee", side_effect=Exception("auth failed")):
-            with pytest.raises(RuntimeError, match="Could not authenticate"):
-                validate_gee_project("bad-project")
+        with (
+            patch("climate_change.core.gee_auth.ensure_gee", side_effect=Exception("auth failed")),
+            pytest.raises(RuntimeError, match="Could not authenticate"),
+        ):
+            validate_gee_project("bad-project")
 
 
 class TestStartupInitGee:
     def test_no_gee_project_logs_warning(self, monkeypatch, caplog):
         monkeypatch.delenv("GEE_PROJECT", raising=False)
         import logging
-        from core.gee_auth import startup_init_gee
+
+        from climate_change.core.gee_auth import startup_init_gee
+
         with caplog.at_level(logging.WARNING):
             startup_init_gee()
         assert any("GEE_PROJECT is not set" in r.message for r in caplog.records)
 
     def test_with_project_calls_ensure_gee(self, monkeypatch):
         monkeypatch.setenv("GEE_PROJECT", "test-project")
-        with patch("core.gee_auth.ensure_gee") as mock_ensure:
-            from core.gee_auth import startup_init_gee
+        with patch("climate_change.core.gee_auth.ensure_gee") as mock_ensure:
+            from climate_change.core.gee_auth import startup_init_gee
+
             startup_init_gee()
         mock_ensure.assert_called_once_with("test-project", allow_prompt=False)
 
     def test_ensure_gee_failure_is_caught_and_logged(self, monkeypatch, caplog):
         monkeypatch.setenv("GEE_PROJECT", "test-project")
         import logging
-        from core.gee_auth import startup_init_gee
-        with patch("core.gee_auth.ensure_gee", side_effect=Exception("fail")):
-            with caplog.at_level(logging.ERROR):
-                startup_init_gee()
+
+        from climate_change.core.gee_auth import startup_init_gee
+
+        with (
+            patch("climate_change.core.gee_auth.ensure_gee", side_effect=Exception("fail")),
+            caplog.at_level(logging.ERROR),
+        ):
+            startup_init_gee()
         assert any("failed" in r.message for r in caplog.records)

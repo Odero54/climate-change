@@ -1,12 +1,11 @@
 """Tests for reporting/report_builder.py — _styles and ReportBuilder."""
+
 import io
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.base_use_case import AnalysisOutput
-from reporting.report_builder import ReportBuilder, _styles
+from climate_change.core.base_use_case import AnalysisOutput
+from climate_change.reporting.report_builder import ReportBuilder, _styles
 
 
 def _make_output(module="drought") -> AnalysisOutput:
@@ -21,7 +20,11 @@ def _make_output(module="drought") -> AnalysisOutput:
                 "labels": ["2020-01"],
                 "datasets": [{"label": "CDI", "data": [0.9], "color": "#C0392B"}],
             },
-            "severity_distribution": {"labels": ["Near normal"], "data": [95.0], "colors": ["#E0E0E0"]},
+            "severity_distribution": {
+                "labels": ["Near normal"],
+                "data": [95.0],
+                "colors": ["#E0E0E0"],
+            },
         },
         metadata={
             "country": "Kenya",
@@ -47,7 +50,7 @@ class TestReportBuilderBuild:
     def test_build_creates_pdf_bytes(self, tmp_path):
         output_path = tmp_path / "report.pdf"
         builder = ReportBuilder(output_path)
-        builder.build(_make_output("drought"), ai_text=None, map_png_bytes=None)
+        builder.build(_make_output("drought"), ai_interpretation=None, map_png_bytes=None)
         assert output_path.exists()
         assert output_path.stat().st_size > 0
 
@@ -56,7 +59,7 @@ class TestReportBuilderBuild:
         builder = ReportBuilder(output_path)
         builder.build(
             _make_output("flood"),
-            ai_text="Flood risk is moderate in the region.",
+            ai_interpretation="Flood risk is moderate in the region.",
             map_png_bytes=None,
         )
         assert output_path.exists()
@@ -72,15 +75,17 @@ class TestReportBuilderBuild:
 
         output_path = tmp_path / "report_map.pdf"
         builder = ReportBuilder(output_path)
-        builder.build(_make_output("food_security"), ai_text=None, map_png_bytes=map_bytes)
+        builder.build(
+            _make_output("food_security"), ai_interpretation=None, map_png_bytes=map_bytes
+        )
         assert output_path.exists()
 
-    @pytest.mark.parametrize("module_id", [
-        "drought", "flood", "food_security", "disease", "land_degradation"
-    ])
+    @pytest.mark.parametrize(
+        "module_id", ["drought", "flood", "food_security", "disease", "land_degradation"]
+    )
     def test_build_all_modules(self, tmp_path, module_id):
         output_path = tmp_path / f"{module_id}.pdf"
         builder = ReportBuilder(output_path)
-        builder.build(_make_output(module_id), ai_text=None, map_png_bytes=None)
+        builder.build(_make_output(module_id), ai_interpretation=None, map_png_bytes=None)
         assert output_path.exists()
         assert output_path.stat().st_size > 0

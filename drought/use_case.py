@@ -79,9 +79,7 @@ class DroughtUseCase(BaseUseCase):
         Coordinates are rounded to 6 d.p. before hashing to prevent float-jitter
         cache misses for semantically identical AOIs.
         """
-        ensure_gee(
-            raw_data.get("gee_project") or config.extra_params.get("gee_project", "")
-        )
+        ensure_gee(raw_data.get("gee_project") or config.extra_params.get("gee_project", ""))
         return _run_cdi_pipeline_cached(_round_floats(raw_data))
 
     def run_model(self, features: dict, config: AnalysisConfig) -> AnalysisOutput:
@@ -165,9 +163,7 @@ class DroughtUseCase(BaseUseCase):
         client = DaskEngine.get_client()
         n = len(configs)
         results: list[dict | None] = [None] * n
-        idx_map = {
-            client.submit(self.run, cfg, pure=False): i for i, cfg in enumerate(configs)
-        }
+        idx_map = {client.submit(self.run, cfg, pure=False): i for i, cfg in enumerate(configs)}
         for future in dask_as_completed(idx_map):
             idx = idx_map[future]
             try:

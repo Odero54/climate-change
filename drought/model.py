@@ -84,10 +84,7 @@ def train_lstm(
 
         model.eval()
         with torch.no_grad():
-            vl = [
-                criterion(model(Xb.to(device)), yb.to(device)).item()
-                for Xb, yb in test_loader
-            ]
+            vl = [criterion(model(Xb.to(device)), yb.to(device)).item() for Xb, yb in test_loader]
         val_losses.append(float(np.mean(vl)))
 
         if val_losses[-1] < best_val:
@@ -217,12 +214,9 @@ def run_kmeans_typology(ds, n_clusters: int = 4) -> dict:
     labels = km.fit_predict(pixel_scaled)
 
     # Rank clusters: 0 = most drought-prone (lowest mean CDI)
-    cluster_means = {
-        c: float(valid_pixels[labels == c].mean()) for c in range(effective_clusters)
-    }
+    cluster_means = {c: float(valid_pixels[labels == c].mean()) for c in range(effective_clusters)}
     rank_map = {
-        old: new
-        for new, old in enumerate(sorted(cluster_means, key=lambda c: cluster_means[c]))
+        old: new for new, old in enumerate(sorted(cluster_means, key=lambda c: cluster_means[c]))
     }
     labels_r = np.vectorize(rank_map.get)(labels)
     full_labels = np.full(pixel_matrix.shape[0], -1, dtype=int)
@@ -272,19 +266,11 @@ def drought_severity_stats(latest_cdi: np.ndarray) -> dict:
         "aoi_valid_pixel_count": int(valid.size),
         "extreme_pct": round(float((valid < 0.50).mean() * 100), 1),
         "severe_pct": round(float(((valid >= 0.50) & (valid < 0.65)).mean() * 100), 1),
-        "moderate_pct": round(
-            float(((valid >= 0.65) & (valid < 0.80)).mean() * 100), 1
-        ),
+        "moderate_pct": round(float(((valid >= 0.65) & (valid < 0.80)).mean() * 100), 1),
         "mild_pct": round(float(((valid >= 0.80) & (valid < 0.90)).mean() * 100), 1),
-        "near_normal_pct": round(
-            float(((valid >= 0.90) & (valid < 1.10)).mean() * 100), 1
-        ),
-        "mild_wet_pct": round(
-            float(((valid >= 1.10) & (valid < 1.20)).mean() * 100), 1
-        ),
-        "moderately_wet_pct": round(
-            float(((valid >= 1.20) & (valid < 1.30)).mean() * 100), 1
-        ),
+        "near_normal_pct": round(float(((valid >= 0.90) & (valid < 1.10)).mean() * 100), 1),
+        "mild_wet_pct": round(float(((valid >= 1.10) & (valid < 1.20)).mean() * 100), 1),
+        "moderately_wet_pct": round(float(((valid >= 1.20) & (valid < 1.30)).mean() * 100), 1),
         "very_wet_pct": round(float((valid >= 1.30).mean() * 100), 1),
     }
 
@@ -328,9 +314,7 @@ class DroughtModel:
     def predict(self, features: dict, config: dict | None = None) -> dict:
         model_type = (config or {}).get("model_type", "lstm")
         if model_type not in VALID_MODEL_TYPES:
-            raise ValueError(
-                f"model_type must be one of {VALID_MODEL_TYPES}, got '{model_type}'"
-            )
+            raise ValueError(f"model_type must be one of {VALID_MODEL_TYPES}, got '{model_type}'")
 
         if model_type == "drought_monitoring":
             return self._predict_drought_monitoring(features, config)
@@ -349,12 +333,8 @@ class DroughtModel:
         model, train_history = train_lstm(train_ds, test_ds, device)
         eval_metrics = evaluate_lstm(model, test_ds, device)
 
-        future_dates = pd.date_range(
-            feat_df.index[-1], periods=FORECAST_H + 1, freq="MS"
-        )[1:]
-        forecast = forecast_with_uncertainty(
-            model, last_seq, future_dates, device=device
-        )
+        future_dates = pd.date_range(feat_df.index[-1], periods=FORECAST_H + 1, freq="MS")[1:]
+        forecast = forecast_with_uncertainty(model, last_seq, future_dates, device=device)
 
         typology = run_kmeans_typology(ds)
         uncertainty = compute_spatial_uncertainty(features)
@@ -380,9 +360,7 @@ class DroughtModel:
 
     # ── drought_monitoring path ───────────────────────────────────────────────
 
-    def _predict_drought_monitoring(
-        self, features: dict, config: dict | None = None
-    ) -> dict:
+    def _predict_drought_monitoring(self, features: dict, config: dict | None = None) -> dict:
         """Use the drought_monitoring package's built-in forecast function."""
         from drought_monitoring.forecast import forecast_all_statistical
 

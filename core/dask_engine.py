@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from dask.distributed import Client, Future, LocalCluster
 
@@ -81,6 +82,8 @@ class DaskEngine:
         dict with the same keys mapping to each callable's return value.
         """
         n = max_workers or len(tasks)
+        if not n:
+            return {}
         with ThreadPoolExecutor(max_workers=n) as pool:
             futures = {k: pool.submit(fn) for k, fn in tasks.items()}
         return {k: f.result() for k, f in futures.items()}

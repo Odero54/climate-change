@@ -75,9 +75,7 @@ def prepare_datasets(
     seq_len: int = SEQ_LEN,
     horizon: int = FORECAST_H,
     holdout_months: int = HOLDOUT_MONTHS,
-) -> tuple[
-    DroughtSequenceDataset, DroughtSequenceDataset, StandardScaler, torch.Tensor
-]:
+) -> tuple[DroughtSequenceDataset, DroughtSequenceDataset, StandardScaler, torch.Tensor]:
     """
     Scale features, split train / test, and package into PyTorch datasets.
     """

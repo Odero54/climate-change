@@ -1,22 +1,22 @@
 """Tests for drought/model.py — DroughtLSTM, severity stats, KMeans, forecast, DroughtModel."""
+
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 import xarray as xr
 
-from drought.features import (
+from climate_change.drought.features import (
     FORECAST_H,
     INPUT_COLS,
     SEQ_LEN,
-    DroughtSequenceDataset,
     build_features,
     prepare_datasets,
 )
-from drought.model import (
+from climate_change.drought.model import (
+    VALID_MODEL_TYPES,
     DroughtLSTM,
     DroughtModel,
-    VALID_MODEL_TYPES,
     _temporally_fill_forecast,
     drought_severity_stats,
     evaluate_lstm,
@@ -25,8 +25,8 @@ from drought.model import (
     train_lstm,
 )
 
-
 # ── DroughtLSTM ───────────────────────────────────────────────────────────────
+
 
 class TestDroughtLSTM:
     def test_forward_pass_shape(self):
@@ -53,11 +53,13 @@ class TestDroughtLSTM:
 
 # ── train_lstm & evaluate_lstm ────────────────────────────────────────────────
 
+
 class TestTrainAndEvaluateLSTM:
     @pytest.fixture()
     def small_datasets(self, cdi_dataframe):
         feat_df = build_features(cdi_dataframe)
-        return prepare_datasets(feat_df, holdout_months=12)
+        # holdout=24 gives test_ds len = 24-12-6+1 = 7 (valid for DataLoader)
+        return prepare_datasets(feat_df, holdout_months=24)
 
     def test_train_returns_model_and_history(self, small_datasets):
         train_ds, test_ds, _, _ = small_datasets
@@ -78,6 +80,7 @@ class TestTrainAndEvaluateLSTM:
 
 
 # ── forecast_with_uncertainty ─────────────────────────────────────────────────
+
 
 class TestForecastWithUncertainty:
     def test_keys_present(self, cdi_dataframe):
@@ -108,6 +111,7 @@ class TestForecastWithUncertainty:
 
 
 # ── run_kmeans_typology ───────────────────────────────────────────────────────
+
 
 def _make_cdi_dataset(n_time=5, n_lon=4, n_lat=3):
     rng = np.random.default_rng(42)
@@ -147,6 +151,7 @@ class TestRunKmeansTypology:
 
 # ── drought_severity_stats ────────────────────────────────────────────────────
 
+
 class TestDroughtSeverityStats:
     def test_all_extreme_drought(self):
         arr = np.array([0.3, 0.4, 0.45])
@@ -178,6 +183,7 @@ class TestDroughtSeverityStats:
 
 # ── _temporally_fill_forecast ─────────────────────────────────────────────────
 
+
 class TestTemporallyFillForecast:
     def test_fills_nan_values(self):
         idx = pd.date_range("2024-01-01", periods=6, freq="MS")
@@ -193,6 +199,7 @@ class TestTemporallyFillForecast:
 
 
 # ── DroughtModel ──────────────────────────────────────────────────────────────
+
 
 class TestDroughtModel:
     def test_invalid_model_type_raises(self):

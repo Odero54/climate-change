@@ -1,22 +1,25 @@
 """Tests for ai_interpreter/interpreter.py — prompt builders and AIInterpreter."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ai_interpreter.interpreter import (
+from climate_change.ai_interpreter.interpreter import (
     AIInterpreter,
+    build_disease_prompt,
     build_drought_prompt,
     build_flood_prompt,
     build_food_security_prompt,
     build_interpretation_prompt,
     build_land_degradation_prompt,
-    build_disease_prompt,
     build_prompt,
 )
-from core.base_use_case import AnalysisOutput
+from climate_change.core.base_use_case import AnalysisOutput
 
 
-def _make_output(module: str, charts: dict | None = None, stats: dict | None = None) -> AnalysisOutput:
+def _make_output(
+    module: str, charts: dict | None = None, stats: dict | None = None
+) -> AnalysisOutput:
     return AnalysisOutput(
         module=module,
         geojson={},
@@ -136,9 +139,9 @@ class TestBuildFoodSecurityPrompt:
 
 
 class TestBuildPromptDispatch:
-    @pytest.mark.parametrize("module_id", [
-        "drought", "flood", "land_degradation", "disease", "food_security"
-    ])
+    @pytest.mark.parametrize(
+        "module_id", ["drought", "flood", "land_degradation", "disease", "food_security"]
+    )
     def test_returns_non_empty_string(self, module_id):
         output = _make_output(module_id)
         result = build_prompt(output)
@@ -155,7 +158,7 @@ class TestAIInterpreter:
     def test_interpret_returns_string(self):
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = self._mock_openai_response()
-        with patch("ai_interpreter.interpreter.OpenAI", return_value=mock_client):
+        with patch("climate_change.ai_interpreter.interpreter.OpenAI", return_value=mock_client):
             ai = AIInterpreter(api_key="test-key")
             result = ai.interpret(_make_output("drought"))
         assert result == "Test interpretation"
@@ -163,7 +166,7 @@ class TestAIInterpreter:
     def test_interpret_calls_gpt4o(self):
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = self._mock_openai_response()
-        with patch("ai_interpreter.interpreter.OpenAI", return_value=mock_client):
+        with patch("climate_change.ai_interpreter.interpreter.OpenAI", return_value=mock_client):
             ai = AIInterpreter(api_key="test-key")
             ai.interpret(_make_output("flood"))
         call_kwargs = mock_client.chat.completions.create.call_args[1]
@@ -171,9 +174,10 @@ class TestAIInterpreter:
 
     def test_openai_error_raises_runtime_error(self):
         from openai import OpenAIError
+
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = OpenAIError("api down")
-        with patch("ai_interpreter.interpreter.OpenAI", return_value=mock_client):
+        with patch("climate_change.ai_interpreter.interpreter.OpenAI", return_value=mock_client):
             ai = AIInterpreter(api_key="test-key")
             with pytest.raises(RuntimeError, match="OpenAI interpretation failed"):
                 ai.interpret(_make_output("drought"))
@@ -181,13 +185,15 @@ class TestAIInterpreter:
     def test_chat_returns_string(self):
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = self._mock_openai_response("Follow-up")
-        with patch("ai_interpreter.interpreter.OpenAI", return_value=mock_client):
+        with patch("climate_change.ai_interpreter.interpreter.OpenAI", return_value=mock_client):
             ai = AIInterpreter(api_key="test-key")
-            result = ai.chat(_make_output("drought"), history=[], user_message="What does this mean?")
+            result = ai.chat(
+                _make_output("drought"), history=[], user_message="What does this mean?"
+            )
         assert result == "Follow-up"
 
     def test_repr_redacts_key(self):
-        with patch("ai_interpreter.interpreter.OpenAI"):
+        with patch("climate_change.ai_interpreter.interpreter.OpenAI"):
             ai = AIInterpreter(api_key="super-secret")
         assert "super-secret" not in repr(ai)
         assert "redacted" in repr(ai)

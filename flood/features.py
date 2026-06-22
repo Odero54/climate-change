@@ -7,7 +7,7 @@ from typing import cast
 import ee
 import numpy as np
 import pandas as pd
-import requests  # type: ignore[import-untyped]
+import requests
 import rioxarray as rxr
 import xarray as xr
 from requests import HTTPError
@@ -72,8 +72,8 @@ def _next_download_scale(scale: int | float, attempt: int) -> int:
 
 
 def _download_image(
-    image: "ee.Image",
-    aoi: "ee.Geometry",
+    image: ee.Image,
+    aoi: ee.Geometry,
     scale: int,
     *,
     band_names: list[str] | None = None,
@@ -149,9 +149,7 @@ def _rain_30d_window(config: dict) -> tuple[str, str]:
 
 def _mndwi_window(config: dict) -> tuple[str, str]:
     post_start, post_end = _post_flood_window(config)
-    return str(config.get("mndwi_start") or post_start), str(
-        config.get("mndwi_end") or post_end
-    )
+    return str(config.get("mndwi_start") or post_start), str(config.get("mndwi_end") or post_end)
 
 
 def _label_window(config: dict) -> tuple[str, str]:
@@ -159,7 +157,7 @@ def _label_window(config: dict) -> tuple[str, str]:
 
 
 # Individual band fetchers
-def fetch_terrain(aoi: "ee.Geometry", scale: int = 90) -> xr.Dataset:
+def fetch_terrain(aoi: ee.Geometry, scale: int = 90) -> xr.Dataset:
     """
     Download SRTM elevation from GEE.
     Returns Dataset with variable 'elevation' and (lat, lon) coords.
@@ -169,16 +167,12 @@ def fetch_terrain(aoi: "ee.Geometry", scale: int = 90) -> xr.Dataset:
     return xr.Dataset({"elevation": da.rename({"x": "lon", "y": "lat"})})
 
 
-def fetch_twi(aoi: "ee.Geometry", scale: int = 500) -> xr.Dataset:
+def fetch_twi(aoi: ee.Geometry, scale: int = 500) -> xr.Dataset:
     """
     Compute Topographic Wetness Index from HydroSHEDS flow accumulation + SRTM slope.
     Returns Dataset with variables 'twi' and 'flow_acc_log'.
     """
-    dem = (
-        ee.Image("USGS/SRTMGL1_003")
-        .select("elevation")
-        .reproject("EPSG:4326", None, 500)
-    )
+    dem = ee.Image("USGS/SRTMGL1_003").select("elevation").reproject("EPSG:4326", None, 500)
     slope_rad = (
         ee.Terrain.products(dem)
         .select("slope")
@@ -198,7 +192,7 @@ def fetch_twi(aoi: "ee.Geometry", scale: int = 500) -> xr.Dataset:
 
 
 def fetch_sar_change(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     pre_start: str,
     pre_end: str,
     flood_start: str,
@@ -230,7 +224,7 @@ def fetch_sar_change(
 
 
 def fetch_rainfall(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     start_7d: str,
     end_7d: str,
     start_30d: str,
@@ -247,9 +241,7 @@ def fetch_rainfall(
         .sum()
         .clip(aoi)
         .rename("rainfall_7d")
-        .addBands(
-            chirps.filterDate(start_30d, end_30d).sum().clip(aoi).rename("rainfall_30d")
-        )
+        .addBands(chirps.filterDate(start_30d, end_30d).sum().clip(aoi).rename("rainfall_30d"))
     )
     raw = _download_image(
         rain,
@@ -260,26 +252,22 @@ def fetch_rainfall(
     return raw.to_dataset(dim="band").rename({"x": "lon", "y": "lat"})
 
 
-def fetch_landcover(aoi: "ee.Geometry", scale: int = 100) -> xr.Dataset:
+def fetch_landcover(aoi: ee.Geometry, scale: int = 100) -> xr.Dataset:
     """
     Download ESA WorldCover 2021 land cover.
     Returns Dataset with variable 'Map' (raw class values 10–95).
     """
-    worldcover = (
-        ee.ImageCollection("ESA/WorldCover/v200").first().select("Map").clip(aoi)
-    )
+    worldcover = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map").clip(aoi)
     da = _download_image(worldcover, aoi, scale).squeeze()
     return xr.Dataset({"Map": da.rename({"x": "lon", "y": "lat"})})
 
 
-def fetch_dist_river(aoi: "ee.Geometry", scale: int = 90) -> xr.Dataset:
+def fetch_dist_river(aoi: ee.Geometry, scale: int = 90) -> xr.Dataset:
     """
     Compute Euclidean distance to permanent water (JRC occurrence ≥ 70 %).
     Returns Dataset with variable 'dist_river' in metres.
     """
-    water_mask = (
-        ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(70).clip(aoi)
-    )
+    water_mask = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(70).clip(aoi)
     dist_river = (
         water_mask.fastDistanceTransform(256, "pixels")
         .sqrt()
@@ -292,7 +280,7 @@ def fetch_dist_river(aoi: "ee.Geometry", scale: int = 90) -> xr.Dataset:
 
 
 def fetch_mndwi(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     start_date: str,
     end_date: str,
     scale: int = 90,
@@ -318,14 +306,10 @@ def fetch_mndwi(
 # ── Private GEE image builders (run in background threads) ─────────────────────
 
 
-def _build_static_image(aoi: "ee.Geometry") -> "ee.Image":
+def _build_static_image(aoi: ee.Geometry) -> ee.Image:
     """Elevation, TWI, dist_river, landcover_norm, coords — event-independent."""
     scale_500 = 500
-    dem = (
-        ee.Image("USGS/SRTMGL1_003")
-        .select("elevation")
-        .reproject("EPSG:4326", None, scale_500)
-    )
+    dem = ee.Image("USGS/SRTMGL1_003").select("elevation").reproject("EPSG:4326", None, scale_500)
     slope_rad = (
         ee.Terrain.products(dem)
         .select("slope")
@@ -335,9 +319,7 @@ def _build_static_image(aoi: "ee.Geometry") -> "ee.Image":
     )
     flow_acc = ee.Image("WWF/HydroSHEDS/30ACC").select("b1").clip(aoi)
     twi = flow_acc.multiply(810_000).divide(slope_rad.tan()).log().rename("twi")
-    water_mask = (
-        ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(70).clip(aoi)
-    )
+    water_mask = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(70).clip(aoi)
     dist_river = (
         water_mask.fastDistanceTransform(256, "pixels")
         .sqrt()
@@ -359,7 +341,7 @@ def _build_static_image(aoi: "ee.Geometry") -> "ee.Image":
     return ee.Image.cat([elevation, twi, dist_river, landcover_norm, coords])
 
 
-def _build_dynamic_image(aoi: "ee.Geometry", config: dict) -> "ee.Image":
+def _build_dynamic_image(aoi: ee.Geometry, config: dict) -> ee.Image:
     """vv_change, rainfall_7d, rainfall_30d, mndwi — event-specific."""
     pre_start, pre_end = _pre_flood_window(config)
     post_start, post_end = _post_flood_window(config)
@@ -383,16 +365,10 @@ def _build_dynamic_image(aoi: "ee.Geometry", config: dict) -> "ee.Image":
     )
     chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(aoi)
     rainfall_7d = (
-        chirps.filterDate(rain_7d_start, rain_7d_end)
-        .sum()
-        .clip(aoi)
-        .rename("rainfall_7d")
+        chirps.filterDate(rain_7d_start, rain_7d_end).sum().clip(aoi).rename("rainfall_7d")
     )
     rainfall_30d = (
-        chirps.filterDate(rain_30d_start, rain_30d_end)
-        .sum()
-        .clip(aoi)
-        .rename("rainfall_30d")
+        chirps.filterDate(rain_30d_start, rain_30d_end).sum().clip(aoi).rename("rainfall_30d")
     )
     s2 = (
         ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
@@ -409,10 +385,10 @@ def _build_dynamic_image(aoi: "ee.Geometry", config: dict) -> "ee.Image":
 
 
 def _build_jrc_label(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     flood_start: str,
     flood_end: str,
-) -> "ee.Image":
+) -> ee.Image:
     """JRC flood-year label with fallback for years beyond v1.4 coverage (> 2021)."""
     jrc_yearly = ee.ImageCollection("JRC/GSW1_4/YearlyHistory")
     jrc_filtered = jrc_yearly.filterDate(flood_start, flood_end)
@@ -426,17 +402,11 @@ def _build_jrc_label(
     permanent_baseline = (
         ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(75).clip(aoi)
     )
-    return (
-        flood_year.eq(2)
-        .And(permanent_baseline.Not())
-        .rename("is_flooded")
-        .toInt()
-        .clip(aoi)
-    )
+    return flood_year.eq(2).And(permanent_baseline.Not()).rename("is_flooded").toInt().clip(aoi)
 
 
 # Feature stack
-def build_feature_datasets(aoi: "ee.Geometry", config: dict) -> dict[str, xr.Dataset]:
+def build_feature_datasets(aoi: ee.Geometry, config: dict) -> dict[str, xr.Dataset]:
     """
     Download all feature bands from GEE in parallel.
     The seven fetch calls are independent HTTP requests; they run concurrently
@@ -485,7 +455,7 @@ def build_feature_datasets(aoi: "ee.Geometry", config: dict) -> dict[str, xr.Dat
     )
 
 
-def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
+def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
     """
     Assemble the 10-band GEE image used for stratified sampling.
     Static (event-independent) and dynamic (event-specific) bands are built
@@ -504,7 +474,7 @@ def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
 
 # Training data sampling
 def sample_training_data(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     config: dict,
     n_pixels: int = 5000,
     scale: int = 90,
@@ -551,9 +521,9 @@ def sample_training_data(
 
 def _sample_labeled_pixels(
     *,
-    labeled: "ee.Image",
-    flood_label: "ee.Image",
-    aoi: "ee.Geometry",
+    labeled: ee.Image,
+    flood_label: ee.Image,
+    aoi: ee.Geometry,
     scale: int,
     n_pixels: int,
     seed: int,

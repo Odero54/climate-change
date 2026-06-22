@@ -6,6 +6,7 @@ charts, and recommendations into a structured PDF.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import math
@@ -281,9 +282,7 @@ class ReportBuilder:
             story.append(Paragraph(info.description, S["body"]))
             story.append(Spacer(1, 0.3 * cm))
             story.append(
-                Paragraph(
-                    f"<b>Dependent variable:</b> {info.dependent_variable}", S["body"]
-                )
+                Paragraph(f"<b>Dependent variable:</b> {info.dependent_variable}", S["body"])
             )
             story.append(
                 Paragraph(
@@ -293,9 +292,7 @@ class ReportBuilder:
                 )
             )
 
-    def _add_map_section(
-        self, story: list, output: AnalysisOutput, map_png_bytes: bytes
-    ) -> None:
+    def _add_map_section(self, story: list, output: AnalysisOutput, map_png_bytes: bytes) -> None:
         S = self._styles
         self._add_rule(story)
         story.append(Paragraph("2. Result Map", S["section_heading"]))
@@ -326,9 +323,7 @@ class ReportBuilder:
         """Generate a module-aware interpretation paragraph for the result map."""
         features = (output.geojson or {}).get("features", [])
         location = self._location_label(output)
-        point_feats = [
-            f for f in features if (f.get("properties") or {}).get("type") != "boundary"
-        ]
+        point_feats = [f for f in features if (f.get("properties") or {}).get("type") != "boundary"]
         n_points = len(point_feats)
         stats = output.stats or {}
 
@@ -402,9 +397,7 @@ class ReportBuilder:
 
         if output.module == "disease":
             high_risk = stats.get("high_risk_pct", _pct("High Risk"))
-            top_driver = stats.get(
-                "top_driver", "rainfall and temperature co-occurrence"
-            )
+            top_driver = stats.get("top_driver", "rainfall and temperature co-occurrence")
             n_clusters = stats.get("n_hotspot_clusters", 0)
             cluster_note = (
                 f"DBSCAN identified {n_clusters} spatial hotspot cluster(s) within the "
@@ -726,9 +719,7 @@ class ReportBuilder:
             return dt.year
         return dt.year - 1
 
-    def _select_raster_band(
-        self, src: Any, output: AnalysisOutput
-    ) -> tuple[int, str | None]:
+    def _select_raster_band(self, src: Any, output: AnalysisOutput) -> tuple[int, str | None]:
         if src.count <= 1:
             return 1, src.descriptions[0] if src.descriptions else None
         if output.module != "drought":
@@ -737,9 +728,7 @@ class ReportBuilder:
         target_year = self._complete_year_from_end_date(output.metadata.get("end_date"))
         candidates: list[tuple[int, int | None, str | None]] = []
         for band_idx in range(1, src.count + 1):
-            description = src.descriptions[band_idx - 1] or src.tags(band_idx).get(
-                "date"
-            )
+            description = src.descriptions[band_idx - 1] or src.tags(band_idx).get("date")
             year = None
             if description:
                 try:
@@ -779,9 +768,7 @@ class ReportBuilder:
         return bool(np.isfinite(np.ma.filled(data, np.nan)).any())
 
     @staticmethod
-    def _osm_zoom(
-        bounds: tuple[float, float, float, float], target_px: int = 900
-    ) -> int:
+    def _osm_zoom(bounds: tuple[float, float, float, float], target_px: int = 900) -> int:
         west, _, east, _ = bounds
         width_m = max(1.0, east - west)
         initial_resolution = 2 * math.pi * 6378137 / 256
@@ -843,9 +830,7 @@ class ReportBuilder:
                     tile = PILImage.open(io.BytesIO(resp.content)).convert("RGB")
                     canvas.paste(tile, ((x - min_x) * 256, (y - min_y) * 256))
         except Exception as exc:
-            _log.warning(
-                "OSM basemap fetch failed; map will render without basemap: %s", exc
-            )
+            _log.warning("OSM basemap fetch failed; map will render without basemap: %s", exc)
             return None
 
         base_west, _, _, base_north = self._tile_bounds(min_x, min_y, zoom)
@@ -929,10 +914,8 @@ class ReportBuilder:
         for f in features:
             props = f.get("properties") or {}
             if props.get("type") == "boundary":
-                try:
+                with contextlib.suppress(Exception):
                     boundary_geom = shape(f["geometry"])
-                except Exception:
-                    pass
             else:
                 point_feats.append(f)
 
@@ -1086,9 +1069,7 @@ class ReportBuilder:
         plt.tight_layout()
         return self._fig_to_image(fig)
 
-    def _chart_forecast(
-        self, charts: dict, cdi_series_tail: list | None = None
-    ) -> Image | None:
+    def _chart_forecast(self, charts: dict, cdi_series_tail: list | None = None) -> Image | None:
         forecast = charts.get("forecast", {})
         if not forecast.get("dates") or not forecast.get("mean"):
             return None
@@ -1128,12 +1109,8 @@ class ReportBuilder:
             markersize=5,
             label="Forecast (mean)",
         )
-        ax.fill_between(
-            list(fc_idx), fc_lo, fc_hi, alpha=0.25, color="#E67E22", label="95% CI"
-        )
-        ax.axhline(
-            0.90, color="gold", linestyle=":", linewidth=1, label="Mild drought (0.90)"
-        )
+        ax.fill_between(list(fc_idx), fc_lo, fc_hi, alpha=0.25, color="#E67E22", label="95% CI")
+        ax.axhline(0.90, color="gold", linestyle=":", linewidth=1, label="Mild drought (0.90)")
         ax.axhline(
             0.65,
             color="orange",
@@ -1202,9 +1179,7 @@ class ReportBuilder:
             linewidth=1,
             label="Mild drought threshold",
         )
-        ax.axhline(
-            1.0, color="grey", linestyle="--", linewidth=0.8, label="Normal (CDI=1)"
-        )
+        ax.axhline(1.0, color="grey", linestyle="--", linewidth=0.8, label="Normal (CDI=1)")
         ax.set_ylabel("Mean CDI")
         ax.set_title("Seasonal CDI Pattern (climatological monthly mean)", fontsize=11)
         ax.legend(fontsize=8)
@@ -1228,9 +1203,7 @@ class ReportBuilder:
         labels = sev_dist["labels"]
         data = sev_dist["data"]
         bar_colors = [
-            CLASS_COLORS.get(lbl)
-            or CLASS_COLORS.get(str(lbl).strip().capitalize())
-            or "#95A5A6"
+            CLASS_COLORS.get(lbl) or CLASS_COLORS.get(str(lbl).strip().capitalize()) or "#95A5A6"
             for lbl in labels
         ]
 
@@ -1358,9 +1331,7 @@ class ReportBuilder:
         img = self._chart_timeseries(charts)
         if img:
             story.append(img)
-            story.append(
-                Paragraph("Figure 2. CDI and sub-index time series.", S["caption"])
-            )
+            story.append(Paragraph("Figure 2. CDI and sub-index time series.", S["caption"]))
         story.append(Spacer(1, 0.4 * cm))
 
         # 5. LSTM Forecast
@@ -1378,11 +1349,7 @@ class ReportBuilder:
             img = self._chart_forecast(charts)
             if img:
                 story.append(img)
-                story.append(
-                    Paragraph(
-                        "Figure 3. LSTM forecast with 95% CI bands.", S["caption"]
-                    )
-                )
+                story.append(Paragraph("Figure 3. LSTM forecast with 95% CI bands.", S["caption"]))
             story.append(Spacer(1, 0.3 * cm))
             # Compact forecast table below the chart
             fc_rows = [["Month", "CDI", "CI Low", "CI High"]]
@@ -1391,12 +1358,8 @@ class ReportBuilder:
                     [
                         date,
                         f"{forecast['mean'][i]:.3f}",
-                        f"{forecast['ci_lower'][i]:.3f}"
-                        if forecast.get("ci_lower")
-                        else "—",
-                        f"{forecast['ci_upper'][i]:.3f}"
-                        if forecast.get("ci_upper")
-                        else "—",
+                        f"{forecast['ci_lower'][i]:.3f}" if forecast.get("ci_lower") else "—",
+                        f"{forecast['ci_upper'][i]:.3f}" if forecast.get("ci_upper") else "—",
                     ]
                 )
             fc_tbl = Table(fc_rows, colWidths=[4 * cm, 3.5 * cm, 3.5 * cm, 4 * cm])
@@ -1464,11 +1427,7 @@ class ReportBuilder:
             img = self._chart_seasonal(charts)
             if img:
                 story.append(img)
-                story.append(
-                    Paragraph(
-                        "Figure 6. Climatological monthly mean CDI.", S["caption"]
-                    )
-                )
+                story.append(Paragraph("Figure 6. Climatological monthly mean CDI.", S["caption"]))
             story.append(Spacer(1, 0.4 * cm))
 
         # 9. Drought Typology
@@ -1589,9 +1548,7 @@ class ReportBuilder:
         for ax, ds in zip(axes, datasets):
             vals = [v if v is not None else float("nan") for v in ds["data"]]
             col = ds.get("color", "#2980B9")
-            ax.plot(
-                range(len(labels)), vals, color=col, linewidth=1.5, label=ds["label"]
-            )
+            ax.plot(range(len(labels)), vals, color=col, linewidth=1.5, label=ds["label"])
             ax.fill_between(range(len(labels)), vals, alpha=0.12, color=col)
             ax.set_ylabel(ds["label"], fontsize=9)
             ax.legend(loc="upper right", fontsize=8)
@@ -1613,9 +1570,7 @@ class ReportBuilder:
         bar_colors = [cmap(i / max(len(features) - 1, 1)) for i in range(len(features))]
         fig, ax = plt.subplots(figsize=(10, max(3, len(features) * 0.45)))
         y_pos = range(len(features))
-        bars = ax.barh(
-            list(y_pos), values, color=bar_colors, edgecolor="white", linewidth=0.4
-        )
+        bars = ax.barh(list(y_pos), values, color=bar_colors, edgecolor="white", linewidth=0.4)
         ax.set_yticks(list(y_pos))
         ax.set_yticklabels(features, fontsize=9)
         ax.set_xlabel("Mean |SHAP value|")
@@ -1632,9 +1587,7 @@ class ReportBuilder:
         plt.tight_layout()
         return self._fig_to_image(fig, width_cm=13)
 
-    def _chart_model_perf(
-        self, perf_data: dict, metrics: list[tuple[str, str]]
-    ) -> Image | None:
+    def _chart_model_perf(self, perf_data: dict, metrics: list[tuple[str, str]]) -> Image | None:
         """
         perf_data: {model_key: {metric1: v, metric2: v, ...}, ..., 'selected': key}
         metrics: [(key, label), ...] — which metrics to plot as grouped bars
@@ -1691,9 +1644,7 @@ class ReportBuilder:
         labels = ts_data.get("labels", [])
         if not datasets or not labels:
             return None
-        ndvi_ds = next(
-            (d for d in datasets if "ndvi" in d["label"].lower()), datasets[0]
-        )
+        ndvi_ds = next((d for d in datasets if "ndvi" in d["label"].lower()), datasets[0])
         vals = np.array([v if v is not None else float("nan") for v in ndvi_ds["data"]])
         years = np.array(labels, dtype=float)
 
@@ -1735,9 +1686,7 @@ class ReportBuilder:
 
         ax.set_xlabel("Year")
         ax.set_ylabel("NDVI")
-        ax.set_title(
-            "Annual NDVI Trend with OLS Regression and Breakpoints", fontsize=11
-        )
+        ax.set_title("Annual NDVI Trend with OLS Regression and Breakpoints", fontsize=11)
         ax.legend(fontsize=8)
         plt.tight_layout()
         return self._fig_to_image(fig)
@@ -1751,10 +1700,7 @@ class ReportBuilder:
         vals = [spread_stats.get(k, 0) for k in keys]
 
         fig, ax = plt.subplots(figsize=(8, 3))
-        bar_colors = [
-            "#2ECC71" if v < 0.10 else "#F1C40F" if v < 0.20 else "#E74C3C"
-            for v in vals
-        ]
+        bar_colors = ["#2ECC71" if v < 0.10 else "#F1C40F" if v < 0.20 else "#E74C3C" for v in vals]
         bars = ax.bar(labels, vals, color=bar_colors, edgecolor="white")
         ax.axhline(
             0.20,
@@ -1861,9 +1807,7 @@ class ReportBuilder:
         rd = charts.get("riskDist", {})
         if rd.get("labels") and rd.get("data"):
             self._add_rule(story)
-            story.append(
-                Paragraph("4. Disease Risk Distribution", S["section_heading"])
-            )
+            story.append(Paragraph("4. Disease Risk Distribution", S["section_heading"]))
             story.append(
                 Paragraph(
                     "Risk classes are derived from the GBM / XGBoost ensemble probability: "
@@ -1904,9 +1848,7 @@ class ReportBuilder:
         ts = charts.get("timeSeries", {})
         if ts.get("datasets"):
             self._add_rule(story)
-            story.append(
-                Paragraph("5. Monthly Environmental Indicators", S["section_heading"])
-            )
+            story.append(Paragraph("5. Monthly Environmental Indicators", S["section_heading"]))
             img = self._chart_timeseries_multi(ts, "Monthly NDVI / Rainfall / LST")
             if img:
                 story.append(img)
@@ -1946,11 +1888,7 @@ class ReportBuilder:
             )
             if img:
                 story.append(img)
-                story.append(
-                    Paragraph(
-                        f"Figure 4. Top risk driver: {features[0]}.", S["caption"]
-                    )
-                )
+                story.append(Paragraph(f"Figure 4. Top risk driver: {features[0]}.", S["caption"]))
             self._interpret(
                 story,
                 f"The primary driver of disease risk is '{features[0]}' "
@@ -1966,12 +1904,8 @@ class ReportBuilder:
         perf = charts.get("model_performance", {})
         if perf:
             self._add_rule(story)
-            story.append(
-                Paragraph("7. Model Performance Comparison", S["section_heading"])
-            )
-            img = self._chart_model_perf(
-                perf, [("f1", "F1-macro"), ("accuracy", "Accuracy")]
-            )
+            story.append(Paragraph("7. Model Performance Comparison", S["section_heading"]))
+            img = self._chart_model_perf(perf, [("f1", "F1-macro"), ("accuracy", "Accuracy")])
             if img:
                 story.append(img)
                 story.append(
@@ -1981,11 +1915,7 @@ class ReportBuilder:
                     )
                 )
             perf_desc = (
-                "strong"
-                if selected_f1 > 0.70
-                else "moderate"
-                if selected_f1 > 0.50
-                else "fair"
+                "strong" if selected_f1 > 0.70 else "moderate" if selected_f1 > 0.50 else "fair"
             )
             self._interpret(
                 story,
@@ -2001,9 +1931,7 @@ class ReportBuilder:
         n_clusters = stats.get("n_hotspot_clusters")
         if n_clusters is not None:
             self._add_rule(story)
-            story.append(
-                Paragraph("8. DBSCAN Hotspot Cluster Summary", S["section_heading"])
-            )
+            story.append(Paragraph("8. DBSCAN Hotspot Cluster Summary", S["section_heading"]))
             hotspot_rows: list[list[str]] = [["Metric", "Value"]]
             hotspot_rows.append(["Number of hotspot clusters", str(n_clusters)])
             if stats.get("hotspot_population") is not None:
@@ -2014,14 +1942,10 @@ class ReportBuilder:
                     ]
                 )
             if stats.get("high_risk_pct") is not None:
-                hotspot_rows.append(
-                    ["High-risk pixel %", f"{stats['high_risk_pct']:.1f}%"]
-                )
+                hotspot_rows.append(["High-risk pixel %", f"{stats['high_risk_pct']:.1f}%"])
             hotspot_list = charts.get("hotspots", [])
             if hotspot_list:
-                hotspot_rows.append(
-                    ["Largest cluster size (pixels)", str(hotspot_list[0]["size"])]
-                )
+                hotspot_rows.append(["Largest cluster size (pixels)", str(hotspot_list[0]["size"])])
             tbl = Table(hotspot_rows, colWidths=[9 * cm, 6 * cm])
             tbl.setStyle(
                 TableStyle(
@@ -2081,9 +2005,7 @@ class ReportBuilder:
         vhi = indices.get("vhi_mean", stats.get("vhi_mean"))
         if any(v is not None for v in [vci, tci, vhi]):
             self._add_rule(story)
-            story.append(
-                Paragraph("4. Vegetation Health Indices", S["section_heading"])
-            )
+            story.append(Paragraph("4. Vegetation Health Indices", S["section_heading"]))
             story.append(
                 Paragraph(
                     "VCI (Vegetation Condition Index) and TCI (Temperature Condition Index) are "
@@ -2093,15 +2015,11 @@ class ReportBuilder:
                     S["body"],
                 )
             )
-            img = self._chart_vhi_indices(
-                {"vci_mean": vci, "tci_mean": tci, "vhi_mean": vhi}
-            )
+            img = self._chart_vhi_indices({"vci_mean": vci, "tci_mean": tci, "vhi_mean": vhi})
             if img:
                 story.append(img)
                 story.append(
-                    Paragraph(
-                        "Figure 2. VCI, TCI, and VHI area-mean values.", S["caption"]
-                    )
+                    Paragraph("Figure 2. VCI, TCI, and VHI area-mean values.", S["caption"])
                 )
             # Summary table
             idx_rows = [["Index", "Area Mean", "Interpretation"]]
@@ -2131,9 +2049,7 @@ class ReportBuilder:
             story.append(tbl)
             vhi_label = _vhi_label(vhi) if vhi is not None else "unavailable"
             vci_cond = (
-                "below the drought threshold"
-                if (vci or 100) < 40
-                else "within acceptable range"
+                "below the drought threshold" if (vci or 100) < 40 else "within acceptable range"
             )
             tci_cond = (
                 "indicating elevated heat stress"
@@ -2156,9 +2072,7 @@ class ReportBuilder:
         rd = charts.get("riskDist", {})
         if rd.get("labels") and rd.get("data"):
             self._add_rule(story)
-            story.append(
-                Paragraph("5. Food Security Risk Distribution", S["section_heading"])
-            )
+            story.append(Paragraph("5. Food Security Risk Distribution", S["section_heading"]))
             story.append(
                 Paragraph(
                     "Three risk classes are assigned by tercile thresholds on the composite food "
@@ -2198,9 +2112,7 @@ class ReportBuilder:
         ts = charts.get("timeSeries", {})
         if ts.get("datasets"):
             self._add_rule(story)
-            story.append(
-                Paragraph("6. Monthly NDVI and Rainfall", S["section_heading"])
-            )
+            story.append(Paragraph("6. Monthly NDVI and Rainfall", S["section_heading"]))
             img = self._chart_timeseries_multi(ts, "Monthly NDVI and Rainfall")
             if img:
                 story.append(img)
@@ -2263,12 +2175,8 @@ class ReportBuilder:
         perf = charts.get("model_performance", {})
         if perf:
             self._add_rule(story)
-            story.append(
-                Paragraph("8. Model Performance Comparison", S["section_heading"])
-            )
-            img = self._chart_model_perf(
-                perf, [("f1", "F1-macro"), ("accuracy", "Accuracy")]
-            )
+            story.append(Paragraph("8. Model Performance Comparison", S["section_heading"]))
+            img = self._chart_model_perf(perf, [("f1", "F1-macro"), ("accuracy", "Accuracy")])
             if img:
                 story.append(img)
                 story.append(
@@ -2279,11 +2187,7 @@ class ReportBuilder:
                     )
                 )
             perf_desc = (
-                "strong"
-                if selected_f1 > 0.70
-                else "moderate"
-                if selected_f1 > 0.50
-                else "fair"
+                "strong" if selected_f1 > 0.70 else "moderate" if selected_f1 > 0.50 else "fair"
             )
             self._interpret(
                 story,
@@ -2366,9 +2270,7 @@ class ReportBuilder:
             )
             features = shap_data["features"]
             values = shap_data.get("mean_abs_shap", [])
-            img = self._chart_shap(
-                shap_data, "Feature Importance (XGBoost SHAP — Flood Drivers)"
-            )
+            img = self._chart_shap(shap_data, "Feature Importance (XGBoost SHAP — Flood Drivers)")
             if img:
                 story.append(img)
                 story.append(
@@ -2378,9 +2280,7 @@ class ReportBuilder:
                     )
                 )
             second = features[1] if len(features) > 1 else "N/A"
-            topo_drivers = [
-                f for f in features[:3] if f in ("elevation", "twi", "dist_river")
-            ]
+            topo_drivers = [f for f in features[:3] if f in ("elevation", "twi", "dist_river")]
             topo_note = (
                 f"Topographic features ({', '.join(topo_drivers)}) dominate, confirming "
                 f"terrain-controlled inundation patterns."
@@ -2400,9 +2300,7 @@ class ReportBuilder:
         perf = charts.get("model_performance", {})
         if perf:
             self._add_rule(story)
-            story.append(
-                Paragraph("6. Model Performance Comparison", S["section_heading"])
-            )
+            story.append(Paragraph("6. Model Performance Comparison", S["section_heading"]))
             img = self._chart_model_perf(perf, [("f1", "F1"), ("auc", "AUC-ROC")])
             if img:
                 story.append(img)
@@ -2434,9 +2332,7 @@ class ReportBuilder:
         uncertainty = charts.get("uncertainty", {})
         if uncertainty.get("spread_stats"):
             self._add_rule(story)
-            story.append(
-                Paragraph("7. Model Uncertainty (Epistemic)", S["section_heading"])
-            )
+            story.append(Paragraph("7. Model Uncertainty (Epistemic)", S["section_heading"]))
             story.append(
                 Paragraph(
                     "Uncertainty is estimated from the absolute spread between RF and XGBoost flood "
@@ -2458,11 +2354,7 @@ class ReportBuilder:
                     )
                 )
             unc_level = (
-                "elevated"
-                if high_pct_unc > 15
-                else "moderate"
-                if high_pct_unc > 5
-                else "low"
+                "elevated" if high_pct_unc > 15 else "moderate" if high_pct_unc > 5 else "low"
             )
             self._interpret(
                 story,
@@ -2493,9 +2385,7 @@ class ReportBuilder:
             ]:
                 if stats.get(key) is not None:
                     val = stats[key]
-                    rows.append(
-                        [label, f"{val:.3f}" if isinstance(val, float) else str(val)]
-                    )
+                    rows.append([label, f"{val:.3f}" if isinstance(val, float) else str(val)])
             tbl = Table(rows, colWidths=[9 * cm, 6 * cm])
             tbl.setStyle(
                 TableStyle(
@@ -2519,9 +2409,7 @@ class ReportBuilder:
             story.append(tbl)
             story.append(Spacer(1, 0.4 * cm))
 
-    def _add_land_degradation_sections(
-        self, story: list, output: AnalysisOutput
-    ) -> None:
+    def _add_land_degradation_sections(self, story: list, output: AnalysisOutput) -> None:
         S = self._styles
         charts = output.charts or {}
         stats = output.stats or {}
@@ -2533,9 +2421,7 @@ class ReportBuilder:
         rd = charts.get("riskDist", {})
         if rd.get("labels") and rd.get("data"):
             self._add_rule(story)
-            story.append(
-                Paragraph("4. Land Degradation Classification", S["section_heading"])
-            )
+            story.append(Paragraph("4. Land Degradation Classification", S["section_heading"]))
             story.append(
                 Paragraph(
                     "Binary classification: Degraded vs. Not Degraded. "
@@ -2603,14 +2489,10 @@ class ReportBuilder:
             img = self._chart_ndvi_trend(ts, trend if trend else stats)
             if img:
                 story.append(img)
-                bkps = trend.get("breakpoint_years") or stats.get(
-                    "breakpoint_years", []
-                )
+                bkps = trend.get("breakpoint_years") or stats.get("breakpoint_years", [])
                 caption = "Figure 3. Annual NDVI with OLS trend line"
                 if bkps:
-                    caption += (
-                        f" and breakpoint(s) at {', '.join(str(y) for y in bkps)}"
-                    )
+                    caption += f" and breakpoint(s) at {', '.join(str(y) for y in bkps)}"
                 story.append(Paragraph(caption + ".", S["caption"]))
             if slope is not None:
                 r2_text = f" (R² = {r2:.3f})" if r2 is not None else ""
@@ -2621,9 +2503,7 @@ class ReportBuilder:
                     if slope < 0 and not mk_sig
                     else "stable or recovering vegetation cover — land management practices may be effective"
                 )
-                bkps = trend.get("breakpoint_years") or stats.get(
-                    "breakpoint_years", []
-                )
+                bkps = trend.get("breakpoint_years") or stats.get("breakpoint_years", [])
                 bkp_note = (
                     f" A structural break was detected at {bkps[0]}, potentially coinciding with "
                     f"a land-use change event or major drought."
@@ -2676,17 +2556,11 @@ class ReportBuilder:
             story.append(Spacer(1, 0.2 * cm))
 
         # 7. Model Performance
-        perf = (
-            charts.get("model_performance", {}) if "model_performance" in charts else {}
-        )
+        perf = charts.get("model_performance", {}) if "model_performance" in charts else {}
         if perf:
             self._add_rule(story)
-            story.append(
-                Paragraph("7. Model Performance Comparison", S["section_heading"])
-            )
-            img = self._chart_model_perf(
-                perf, [("f1", "F1-weighted"), ("accuracy", "Accuracy")]
-            )
+            story.append(Paragraph("7. Model Performance Comparison", S["section_heading"]))
+            img = self._chart_model_perf(perf, [("f1", "F1-weighted"), ("accuracy", "Accuracy")])
             if img:
                 story.append(img)
                 story.append(
@@ -2697,11 +2571,7 @@ class ReportBuilder:
                     )
                 )
             perf_desc = (
-                "strong"
-                if selected_f1 > 0.70
-                else "moderate"
-                if selected_f1 > 0.55
-                else "fair"
+                "strong" if selected_f1 > 0.70 else "moderate" if selected_f1 > 0.55 else "fair"
             )
             self._interpret(
                 story,
@@ -2730,9 +2600,7 @@ class ReportBuilder:
             ]:
                 v = src.get(key)
                 if v is not None:
-                    trend_rows.append(
-                        [label, f"{v:.4f}" if isinstance(v, float) else str(v)]
-                    )
+                    trend_rows.append([label, f"{v:.4f}" if isinstance(v, float) else str(v)])
             tbl = Table(trend_rows, colWidths=[9 * cm, 6 * cm])
             tbl.setStyle(
                 TableStyle(
@@ -2759,9 +2627,7 @@ class ReportBuilder:
     def _add_ai_section(self, story: list, interpretation: str) -> None:
         S = self._styles
         self._add_rule(story)
-        story.append(
-            Paragraph("Human-centered AI Interpretation", S["section_heading"])
-        )
+        story.append(Paragraph("Human-centered AI Interpretation", S["section_heading"]))
         story.append(
             Paragraph(
                 "The following human-centered AI interpretation uses the analysis "
@@ -2798,9 +2664,7 @@ class ReportBuilder:
     def _add_appendix(self, story: list, output: AnalysisOutput) -> None:
         S = self._styles
         self._add_rule(story)
-        story.append(
-            Paragraph("Appendix: Data Sources & Limitations", S["section_heading"])
-        )
+        story.append(Paragraph("Appendix: Data Sources & Limitations", S["section_heading"]))
 
         sources = {
             "drought": [
@@ -3086,9 +2950,7 @@ class ReportBuilder:
         def cell(value: str) -> Paragraph:
             return Paragraph(escape(str(value)), cell_style)
 
-        rows = [
-            [Paragraph(label, header_style) for label in ("Term", "Meaning", "Purpose")]
-        ]
+        rows = [[Paragraph(label, header_style) for label in ("Term", "Meaning", "Purpose")]]
         rows.extend(
             [
                 [cell(term), cell(meaning), cell(purpose)]
