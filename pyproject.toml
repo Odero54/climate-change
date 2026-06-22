@@ -1,0 +1,111 @@
+[project]
+name = "climate-change"
+version = "1.0.0"
+description = "Climate Resilience and Adaptation Decision Support System — multi-hazard EO analysis (drought, flood, food security, disease, land degradation)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10,<3.14"
+authors = [
+    { name = "geoges" },
+]
+keywords = [
+    "climate-change",
+    "drought",
+    "flood",
+    "food-security",
+    "disease-surveillance",
+    "land-degradation",
+    "google-earth-engine",
+    "remote-sensing",
+    "machine-learning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "dask[distributed]>=2024.8.0",
+    "drought-monitoring>=0.1.8",
+    "earthengine-api>=0.1.370",
+    "joblib>=1.3",
+    "lightgbm>=4.0",
+    "matplotlib>=3.5",
+    "numpy>=1.24",
+    "openai>=1.0",
+    "pandas>=2.0",
+    "Pillow>=10.0",
+    "rasterio>=1.3",
+    "reportlab>=4.0",
+    "requests>=2.31",
+    "rioxarray>=0.15",
+    "ruptures>=1.1",
+    "scikit-learn>=1.3",
+    "scipy>=1.11",
+    "torch>=2.1",
+    "xarray>=2023.1",
+    "xee>=0.0.22",
+    "xgboost>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Odero54/climate-change"
+"Bug Tracker" = "https://github.com/Odero54/climate-change/issues"
+
+[project.optional-dependencies]
+gee    = ["earthengine-api>=0.1.370", "xee>=0.0.22"]
+cog    = ["rasterio>=1.3", "rioxarray>=0.15"]
+ml     = ["scikit-learn>=1.3", "xgboost>=2.0", "lightgbm>=4.0", "shap>=0.44", "torch>=2.1"]
+ai     = ["openai>=1.0"]
+report = ["reportlab>=4.0", "Pillow>=10.0"]
+dev    = [
+    "pytest>=7",
+    "pytest-cov",
+    "jupyterlab",
+    "matplotlib>=3.5",
+    "rasterio>=1.3",
+    "rioxarray>=0.15",
+]
+all    = [
+    "earthengine-api>=0.1.370",
+    "xee>=0.0.22",
+    "rasterio>=1.3",
+    "rioxarray>=0.15",
+    "scikit-learn>=1.3",
+    "xgboost>=2.0",
+    "lightgbm>=4.0",
+    "shap>=0.44",
+    "torch>=2.1",
+    "openai>=1.0",
+    "reportlab>=4.0",
+    "Pillow>=10.0",
+]
+
+# The repo root IS the climate_change package (no climate_change/ subdirectory)
+[tool.setuptools]
+packages = [
+    "climate_change",
+    "climate_change.ai_interpreter",
+    "climate_change.core",
+    "climate_change.disease",
+    "climate_change.drought",
+    "climate_change.flood",
+    "climate_change.food_security",
+    "climate_change.land_degradation",
+    "climate_change.reporting",
+]
+
+[tool.setuptools.package-dir]
+"climate_change" = "."
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
