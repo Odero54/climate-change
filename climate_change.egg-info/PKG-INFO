@@ -49,6 +49,8 @@ Requires-Dist: xgboost>=2.0; extra == "ml"
 Requires-Dist: lightgbm>=4.0; extra == "ml"
 Requires-Dist: shap>=0.44; extra == "ml"
 Requires-Dist: torch>=2.1; extra == "ml"
+Requires-Dist: numba>=0.58; extra == "ml"
+Requires-Dist: llvmlite>=0.41; extra == "ml"
 Provides-Extra: ai
 Requires-Dist: openai>=1.0; extra == "ai"
 Provides-Extra: report
@@ -57,6 +59,9 @@ Requires-Dist: Pillow>=10.0; extra == "report"
 Provides-Extra: dev
 Requires-Dist: pytest>=7; extra == "dev"
 Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: ruff>=0.4; extra == "dev"
+Requires-Dist: mypy>=1.10; extra == "dev"
 Requires-Dist: jupyterlab; extra == "dev"
 Requires-Dist: matplotlib>=3.5; extra == "dev"
 Requires-Dist: rasterio>=1.3; extra == "dev"
