@@ -1,3 +1,4 @@
 .env
 .venv/
 climate_change.egg-info/
+experiments/
