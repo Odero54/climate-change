@@ -1,9 +1,8 @@
 """Tests for core/cache.py — SimpleCache."""
+
 import time
 
-import pytest
-
-from core.cache import SimpleCache
+from climate_change.core.cache import SimpleCache
 
 
 class TestSimpleCache:

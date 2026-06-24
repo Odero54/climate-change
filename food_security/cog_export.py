@@ -59,7 +59,7 @@ def predict_food_security_grid(
         ).reshape(-1)
         valid_mask = valid_mask & inside_aoi
 
-    risk_grid = np.zeros(n_lat * n_lon, dtype=np.uint8)
+    risk_grid: np.ndarray = np.zeros(n_lat * n_lon, dtype=np.uint8)
     if valid_mask.any():
         X_valid = scaler.transform(X_full[valid_mask])
         if model_type == "rf":
@@ -67,9 +67,7 @@ def predict_food_security_grid(
         elif model_type == "xgboost":
             proba = xgb_model.predict_proba(X_valid)
         else:
-            proba = (
-                rf_model.predict_proba(X_valid) + xgb_model.predict_proba(X_valid)
-            ) / 2.0
+            proba = (rf_model.predict_proba(X_valid) + xgb_model.predict_proba(X_valid)) / 2.0
         pred_classes = np.argmax(proba, axis=1).astype(np.uint8) + 1
         risk_grid[valid_mask] = pred_classes
 

@@ -1,15 +1,15 @@
 """Tests for land_degradation/model.py — train_rf, train_lgbm, evaluate_models,
 compute_ndvi_trend, build_degradation_charts."""
+
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import pytest
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
-import lightgbm as lgb
-
-from land_degradation.features import DEGRADATION_CLASSES, FEATURE_COLS
-from land_degradation.model import (
+from climate_change.land_degradation.features import DEGRADATION_CLASSES, FEATURE_COLS
+from climate_change.land_degradation.model import (
     VALID_MODEL_TYPES,
     build_degradation_charts,
     compute_ndvi_trend,
@@ -22,7 +22,9 @@ from land_degradation.model import (
 @pytest.fixture()
 def trained_land_models(tiny_binary_xy):
     X, y = tiny_binary_xy
-    X_tr, X_te, y_tr, y_te = train_test_split(X[:, :8], y, test_size=0.3, random_state=42, stratify=y)
+    X_tr, X_te, y_tr, y_te = train_test_split(
+        X[:, :8], y, test_size=0.3, random_state=42, stratify=y
+    )
     rf, _ = train_rf(X_tr, y_tr, cv_folds=2)
     lgbm, _ = train_lgbm(X_tr, y_tr, cv_folds=2)
     return rf, lgbm, X_te, y_te

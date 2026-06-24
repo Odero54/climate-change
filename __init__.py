@@ -15,14 +15,21 @@ Usage:
     )
 """
 
+# pyright: reportMissingImports=false
+
 from __future__ import annotations
 
-# ── Lightweight ────────────────────────────────────────────────────────────────
-from .ai_interpreter import (
+# Use absolute imports so this file is safe to load without a package context
+# (pytest traverses parent __init__.py files during test discovery).
+#
+# Setuptools maps ``climate_change`` to this repository root with an editable
+# import hook. Pylance cannot follow that hook, hence the file-scoped directive
+# above; Python, pytest, and mypy all resolve these imports normally.
+from climate_change.ai_interpreter import (
     AIInterpreter,
     build_interpretation_prompt,
 )
-from .core import (
+from climate_change.core import (
     MODULE_MAP,
     AnalysisConfig,
     AnalysisOutput,
@@ -33,38 +40,38 @@ from .core import (
     register_module,
     validate_gee_project,
 )
-from .registry import (
+from climate_change.registry import (
     USE_CASE_REGISTRY,
     ModelOption,
     UseCaseInfo,
     get_use_case_info,
 )
-from .reporting import ReportBuilder
+from climate_change.reporting import ReportBuilder
 
 
 def __getattr__(name: str):
     if name == "DaskEngine":
-        from .core.dask_engine import DaskEngine
+        from climate_change.core.dask_engine import DaskEngine
 
         return DaskEngine
     if name == "DroughtUseCase":
-        from .drought import DroughtUseCase
+        from climate_change.drought import DroughtUseCase
 
         return DroughtUseCase
     if name == "FloodRiskUseCase":
-        from .flood import FloodRiskUseCase
+        from climate_change.flood import FloodRiskUseCase
 
         return FloodRiskUseCase
     if name == "FoodSecurityUseCase":
-        from .food_security import FoodSecurityUseCase
+        from climate_change.food_security import FoodSecurityUseCase
 
         return FoodSecurityUseCase
     if name == "DiseaseRiskUseCase":
-        from .disease import DiseaseRiskUseCase
+        from climate_change.disease import DiseaseRiskUseCase
 
         return DiseaseRiskUseCase
     if name == "LandDegradationUseCase":
-        from .land_degradation import LandDegradationUseCase
+        from climate_change.land_degradation import LandDegradationUseCase
 
         return LandDegradationUseCase
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -82,7 +89,7 @@ async def run_analysis(
     report_output_dir: str | None = None,
     map_png_bytes: bytes | None = None,
 ):
-    from .core.runner import run_analysis as _run
+    from climate_change.core.runner import run_analysis as _run
 
     return await _run(
         module=module,

@@ -112,6 +112,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--import-mode=importlib"
 
 # ── Ruff ──────────────────────────────────────────────────────────────────────
 [tool.ruff]
@@ -131,8 +132,10 @@ select = [
     "SIM", # flake8-simplify
 ]
 ignore = [
-    "E501",  # line too long — handled by formatter
-    "B008",  # do not perform function call in default args
+    "E402",   # module-level import not at top — logger before imports is intentional
+    "E501",   # line too long — handled by formatter
+    "B008",   # do not perform function call in default args
+    "B905",   # zip() without strict= — iterables are always paired here
     "SIM108", # ternary operator — not always clearer
 ]
 
@@ -146,9 +149,11 @@ indent-style = "space"
 # ── Mypy ──────────────────────────────────────────────────────────────────────
 [tool.mypy]
 python_version = "3.10"
+files = ["."]
 strict = false
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_return_any = false
 disallow_untyped_defs = false
+explicit_package_bases = true
 exclude = ["experiments/", "\\.venv/", "tests/"]

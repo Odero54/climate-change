@@ -6,7 +6,7 @@ from typing import cast
 import ee
 import numpy as np
 import pandas as pd
-import requests  # type: ignore[import-untyped]
+import requests
 import rioxarray as rxr
 import xarray as xr
 from requests import HTTPError
@@ -42,7 +42,7 @@ RISK_PERCENTILES: tuple[float, float] = (1 / 3, 2 / 3)
 
 
 def fetch_vci_tci(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     lt_start: str,
     study_start: str,
     study_end: str,
@@ -57,15 +57,11 @@ def fetch_vci_tci(
     Returns Dataset with variables 'vci' and 'tci'.
     """
 
-    def _scale_ndvi(img: "ee.Image") -> "ee.Image":
+    def _scale_ndvi(img: ee.Image) -> ee.Image:
         return img.multiply(0.0001).copyProperties(img, ["system:time_start"])
 
-    def _scale_lst(img: "ee.Image") -> "ee.Image":
-        return (
-            img.multiply(0.02)
-            .subtract(273.15)
-            .copyProperties(img, ["system:time_start"])
-        )
+    def _scale_lst(img: ee.Image) -> ee.Image:
+        return img.multiply(0.02).subtract(273.15).copyProperties(img, ["system:time_start"])
 
     # Long-term NDVI baseline
     modis_lt = (
@@ -135,7 +131,7 @@ def fetch_vci_tci(
 
 
 def fetch_rainfall_anomaly_pct(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     lt_start: str,
     study_start: str,
     study_end: str,
@@ -177,7 +173,7 @@ def fetch_rainfall_anomaly_pct(
 
 
 def fetch_ndvi_slope_img(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     lt_start: str,
     study_end: str,
     scale: int = 1000,
@@ -187,10 +183,10 @@ def fetch_ndvi_slope_img(
     Returns Dataset with variable 'ndvi_slope'.
     """
 
-    def _scale_ndvi(img: "ee.Image") -> "ee.Image":
+    def _scale_ndvi(img: ee.Image) -> ee.Image:
         return img.multiply(0.0001).copyProperties(img, ["system:time_start"])
 
-    def _add_time(img: "ee.Image") -> "ee.Image":
+    def _add_time(img: ee.Image) -> ee.Image:
         t = img.date().difference(ee.Date(lt_start), "year")
         return img.addBands(ee.Image(t).rename("time").float())
 
@@ -212,7 +208,7 @@ def fetch_ndvi_slope_img(
 
 
 def fetch_mndwi(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     start: str,
     end: str,
     scale: int = 1000,
@@ -222,7 +218,7 @@ def fetch_mndwi(
     Returns Dataset with variable 'mndwi'.
     """
 
-    def _add_mndwi(img: "ee.Image") -> "ee.Image":
+    def _add_mndwi(img: ee.Image) -> ee.Image:
         return (
             img.normalizedDifference(["B3", "B11"])
             .rename("mndwi")
@@ -244,11 +240,9 @@ def fetch_mndwi(
     return xr.Dataset({"mndwi": da.rename({"x": "lon", "y": "lat"})})
 
 
-def fetch_terrain_slope(aoi: "ee.Geometry", scale: int = 1000) -> xr.Dataset:
+def fetch_terrain_slope(aoi: ee.Geometry, scale: int = 1000) -> xr.Dataset:
     """SRTM-derived terrain slope in degrees. Returns Dataset with variable 'slope_terrain'."""
-    slope = (
-        ee.Terrain.slope(ee.Image("USGS/SRTMGL1_003")).clip(aoi).rename("slope_terrain")
-    )
+    slope = ee.Terrain.slope(ee.Image("USGS/SRTMGL1_003")).clip(aoi).rename("slope_terrain")
     url = slope.getDownloadURL(
         {"region": aoi, "scale": scale, "crs": "EPSG:4326", "format": "GEO_TIFF"}
     )
@@ -256,7 +250,7 @@ def fetch_terrain_slope(aoi: "ee.Geometry", scale: int = 1000) -> xr.Dataset:
     return xr.Dataset({"slope_terrain": da.rename({"x": "lon", "y": "lat"})})
 
 
-def fetch_landcover(aoi: "ee.Geometry", scale: int = 1000) -> xr.Dataset:
+def fetch_landcover(aoi: ee.Geometry, scale: int = 1000) -> xr.Dataset:
     """
     ESA WorldCover v200 normalised to [0, 1] (class value / 100).
     Returns Dataset with variable 'land_cover'.
@@ -276,7 +270,7 @@ def fetch_landcover(aoi: "ee.Geometry", scale: int = 1000) -> xr.Dataset:
     return xr.Dataset({"land_cover": da.rename({"x": "lon", "y": "lat"})})
 
 
-def build_feature_datasets(aoi: "ee.Geometry", config: dict) -> dict[str, xr.Dataset]:
+def build_feature_datasets(aoi: ee.Geometry, config: dict) -> dict[str, xr.Dataset]:
     """
     Download all seven food-security feature bands from GEE in parallel.
     The six fetch calls are independent HTTP requests; they run concurrently
@@ -293,15 +287,11 @@ def build_feature_datasets(aoi: "ee.Geometry", config: dict) -> dict[str, xr.Dat
 
     return DaskEngine.run_io_parallel(
         {
-            "vci_tci": lambda: fetch_vci_tci(
-                aoi, lt_start, study_start, study_end, scale=scale
-            ),
+            "vci_tci": lambda: fetch_vci_tci(aoi, lt_start, study_start, study_end, scale=scale),
             "rainfall": lambda: fetch_rainfall_anomaly_pct(
                 aoi, lt_start, study_start, study_end, scale=scale
             ),
-            "ndvi_slope": lambda: fetch_ndvi_slope_img(
-                aoi, lt_start, study_end, scale=scale
-            ),
+            "ndvi_slope": lambda: fetch_ndvi_slope_img(aoi, lt_start, study_end, scale=scale),
             "mndwi": lambda: fetch_mndwi(aoi, s2_start, study_end, scale=scale),
             "terrain": lambda: fetch_terrain_slope(aoi, scale=scale),
             "landcover": lambda: fetch_landcover(aoi, scale=scale),
@@ -309,7 +299,7 @@ def build_feature_datasets(aoi: "ee.Geometry", config: dict) -> dict[str, xr.Dat
     )
 
 
-def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
+def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
     """
     Assemble the 7-band GEE image used for stratified pixel sampling.
     Band order matches FEATURE_COLS.
@@ -320,17 +310,13 @@ def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
     s2_start = config.get("s2_start", "2020-01-01")
     scale = config.get("scale", 1000)
 
-    def _scale_ndvi(img: "ee.Image") -> "ee.Image":
+    def _scale_ndvi(img: ee.Image) -> ee.Image:
         return img.multiply(0.0001).copyProperties(img, ["system:time_start"])
 
-    def _scale_lst(img: "ee.Image") -> "ee.Image":
-        return (
-            img.multiply(0.02)
-            .subtract(273.15)
-            .copyProperties(img, ["system:time_start"])
-        )
+    def _scale_lst(img: ee.Image) -> ee.Image:
+        return img.multiply(0.02).subtract(273.15).copyProperties(img, ["system:time_start"])
 
-    def _add_time(img: "ee.Image") -> "ee.Image":
+    def _add_time(img: ee.Image) -> ee.Image:
         t = img.date().difference(ee.Date(lt_start), "year")
         return img.addBands(ee.Image(t).rename("time").float())
 
@@ -389,16 +375,10 @@ def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
     # CHIRPS rainfall anomaly %
     chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(aoi)
     lt_rain_mean = (
-        chirps.filterDate(lt_start, study_start)
-        .select("precipitation")
-        .mean()
-        .multiply(365)
+        chirps.filterDate(lt_start, study_start).select("precipitation").mean().multiply(365)
     )
     study_rain_mean = (
-        chirps.filterDate(study_start, study_end)
-        .select("precipitation")
-        .mean()
-        .multiply(365)
+        chirps.filterDate(study_start, study_end).select("precipitation").mean().multiply(365)
     )
     rain_anom = (
         study_rain_mean.subtract(lt_rain_mean)
@@ -416,15 +396,11 @@ def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
         .select("NDVI")
         .map(_scale_ndvi)
     )
-    trend = (
-        modis_full.map(_add_time)
-        .select(["time", "NDVI"])
-        .reduce(ee.Reducer.linearFit())
-    )
+    trend = modis_full.map(_add_time).select(["time", "NDVI"]).reduce(ee.Reducer.linearFit())
     ndvi_slope = trend.select("scale").rename("ndvi_slope").clip(aoi)
 
     # Sentinel-2 MNDWI
-    def _add_mndwi(img: "ee.Image") -> "ee.Image":
+    def _add_mndwi(img: ee.Image) -> ee.Image:
         return (
             img.normalizedDifference(["B3", "B11"])
             .rename("mndwi")
@@ -464,7 +440,7 @@ def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
 
 
 def fetch_ndvi_monthly_timeseries(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     start: str,
     end: str,
 ) -> pd.DataFrame:
@@ -473,11 +449,11 @@ def fetch_ndvi_monthly_timeseries(
     Returns DataFrame with DatetimeIndex and column 'ndvi'.
     """
 
-    def _scale_ndvi(img: "ee.Image") -> "ee.Image":
+    def _scale_ndvi(img: ee.Image) -> ee.Image:
         return img.multiply(0.0001).copyProperties(img, ["system:time_start"])
 
-    def _mean_feat(img: "ee.Image") -> "ee.Feature":
-        v = img.reduceRegion(ee.Reducer.mean(), aoi, 1000, maxPixels=1e9).get("NDVI")
+    def _mean_feat(img: ee.Image) -> ee.Feature:
+        v = img.reduceRegion(ee.Reducer.mean(), aoi, 1000, maxPixels=int(1e9)).get("NDVI")
         return ee.Feature(None, {"date": img.date().format("YYYY-MM"), "ndvi": v})
 
     modis = (
@@ -487,9 +463,7 @@ def fetch_ndvi_monthly_timeseries(
         .select("NDVI")
         .map(_scale_ndvi)
     )
-    records = cast(dict, ee.FeatureCollection(modis.map(_mean_feat)).getInfo())[
-        "features"
-    ]
+    records = cast(dict, ee.FeatureCollection(modis.map(_mean_feat)).getInfo())["features"]
     return (
         pd.DataFrame([f["properties"] for f in records])
         .dropna()
@@ -500,7 +474,7 @@ def fetch_ndvi_monthly_timeseries(
 
 
 def fetch_monthly_rainfall(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     start: str,
     end: str,
 ) -> pd.DataFrame:
@@ -508,12 +482,10 @@ def fetch_monthly_rainfall(
     Monthly area-mean CHIRPS rainfall sum over [start, end].
     Returns DataFrame with DatetimeIndex and column 'rain_mm'.
     """
-    n_months = int(
-        cast(int, ee.Date(end).difference(ee.Date(start), "month").round().getInfo())
-    )
+    n_months = int(cast(int, ee.Date(end).difference(ee.Date(start), "month").round().getInfo()))
     months = ee.List.sequence(0, n_months - 1)
 
-    def _monthly_sum(offset: "ee.Number") -> "ee.Feature":
+    def _monthly_sum(offset: ee.Number) -> ee.Feature:
         s = ee.Date(start).advance(offset, "month")
         e = s.advance(1, "month")
         v = (
@@ -522,14 +494,12 @@ def fetch_monthly_rainfall(
             .filterDate(s, e)
             .select("precipitation")
             .sum()
-            .reduceRegion(ee.Reducer.mean(), aoi, 1000, maxPixels=1e9)
+            .reduceRegion(ee.Reducer.mean(), aoi, 1000, maxPixels=int(1e9))
             .get("precipitation", 0)
         )
         return ee.Feature(None, {"date": s.format("YYYY-MM"), "rain_mm": v})
 
-    records = cast(dict, ee.FeatureCollection(months.map(_monthly_sum)).getInfo())[
-        "features"
-    ]
+    records = cast(dict, ee.FeatureCollection(months.map(_monthly_sum)).getInfo())["features"]
     return (
         pd.DataFrame([f["properties"] for f in records])
         .dropna()
@@ -567,8 +537,8 @@ def _compute_food_score(df: pd.DataFrame) -> np.ndarray:
 
 
 def sample_training_data(
-    feature_stack: "ee.Image",
-    aoi: "ee.Geometry",
+    feature_stack: ee.Image,
+    aoi: ee.Geometry,
     n_pixels: int = 3000,
     scale: int = 1000,
     seed: int = 42,

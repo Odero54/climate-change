@@ -1,4 +1,5 @@
 """Shared fixtures for climate_change test suite."""
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -8,9 +9,7 @@ import pytest
 def simple_polygon_geojson():
     return {
         "type": "Polygon",
-        "coordinates": [
-            [[36.0, -1.0], [37.0, -1.0], [37.0, 0.0], [36.0, 0.0], [36.0, -1.0]]
-        ],
+        "coordinates": [[[36.0, -1.0], [37.0, -1.0], [37.0, 0.0], [36.0, 0.0], [36.0, -1.0]]],
     }
 
 
@@ -23,9 +22,7 @@ def feature_geojson(simple_polygon_geojson):
 def feature_collection_geojson(simple_polygon_geojson):
     return {
         "type": "FeatureCollection",
-        "features": [
-            {"type": "Feature", "geometry": simple_polygon_geojson, "properties": {}}
-        ],
+        "features": [{"type": "Feature", "geometry": simple_polygon_geojson, "properties": {}}],
     }
 
 

@@ -1,15 +1,15 @@
 """Tests for registry.py — USE_CASE_REGISTRY, ModelOption, UseCaseInfo, get_use_case_info."""
+
 import pytest
 
-from registry import USE_CASE_REGISTRY, ModelOption, UseCaseInfo, get_use_case_info
-
+from climate_change.registry import USE_CASE_REGISTRY, ModelOption, UseCaseInfo, get_use_case_info
 
 EXPECTED_MODULES = {"drought", "flood", "food_security", "disease", "land_degradation"}
 
 
 class TestUseCaseRegistry:
     def test_all_expected_modules_present(self):
-        assert EXPECTED_MODULES == set(USE_CASE_REGISTRY.keys())
+        assert set(USE_CASE_REGISTRY.keys()) == EXPECTED_MODULES
 
     def test_each_entry_is_use_case_info(self):
         for module_id, info in USE_CASE_REGISTRY.items():
@@ -59,7 +59,7 @@ class TestModelOption:
 
     def test_is_frozen(self):
         opt = ModelOption(id="rf", label="RF", recommended=False, note="")
-        with pytest.raises(Exception):
+        with pytest.raises(AttributeError):
             opt.id = "changed"
 
 

@@ -1,9 +1,10 @@
 """Tests for core/dask_engine.py."""
-from unittest.mock import MagicMock, patch
+
+from unittest.mock import MagicMock
 
 import pytest
 
-from core.dask_engine import DaskEngine
+from climate_change.core.dask_engine import DaskEngine
 
 
 class TestRunIoParallel:
@@ -82,13 +83,11 @@ class TestClipRasterToAoi:
     def test_clips_with_polygon(self, simple_polygon_geojson):
         mock_da = MagicMock()
         mock_da.rio.clip.return_value = "clipped"
-        with patch("core.dask_engine.rioxarray"):
-            result = DaskEngine.clip_raster_to_aoi(mock_da, simple_polygon_geojson)
+        result = DaskEngine.clip_raster_to_aoi(mock_da, simple_polygon_geojson)
         assert result == "clipped"
 
     def test_clips_with_feature(self, feature_geojson):
         mock_da = MagicMock()
         mock_da.rio.clip.return_value = "clipped_feat"
-        with patch("core.dask_engine.rioxarray"):
-            result = DaskEngine.clip_raster_to_aoi(mock_da, feature_geojson)
+        result = DaskEngine.clip_raster_to_aoi(mock_da, feature_geojson)
         assert result == "clipped_feat"

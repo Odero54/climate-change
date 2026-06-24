@@ -1,9 +1,8 @@
 """Tests for disease/features.py — constants and _normalise_date_window."""
+
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
-from disease.features import (
+from climate_change.disease.features import (
     DISEASE_CLASSES,
     DISEASE_COLORS,
     FEATURE_COLS,

@@ -1,7 +1,6 @@
 """Tests for food_security/features.py — constants and pure utilities."""
-import pytest
 
-from food_security.features import (
+from climate_change.food_security.features import (
     FEATURE_COLS,
     FOOD_CLASSES,
     FOOD_COLORS,

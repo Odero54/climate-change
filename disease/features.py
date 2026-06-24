@@ -7,7 +7,7 @@ from typing import cast
 import ee
 import numpy as np
 import pandas as pd
-import requests  # type: ignore[import-untyped]
+import requests
 import rioxarray as rxr
 import xarray as xr
 from requests import HTTPError
@@ -39,9 +39,7 @@ SCORE_WEIGHTS: dict[str, float] = {
 RISK_PERCENTILES: tuple[float, float] = (1 / 3, 2 / 3)
 
 
-def _normalise_date_window(
-    start: str, end: str, minimum_days: int = 90
-) -> tuple[str, str]:
+def _normalise_date_window(start: str, end: str, minimum_days: int = 90) -> tuple[str, str]:
     """
     Keep requested disease windows inside the likely available satellite archive.
     Users can accidentally select today/future dates; some GEE collections lag by a
@@ -57,22 +55,20 @@ def _normalise_date_window(
     return start_date.isoformat(), end_date.isoformat()
 
 
-def _collection_size(collection: "ee.ImageCollection") -> int:
+def _collection_size(collection: ee.ImageCollection) -> int:
     return int(cast(int, collection.size().getInfo()))
 
 
 def _require_images(
-    collection: "ee.ImageCollection", label: str, start: str, end: str
-) -> "ee.ImageCollection":
+    collection: ee.ImageCollection, label: str, start: str, end: str
+) -> ee.ImageCollection:
     if _collection_size(collection) == 0:
         raise ValueError(f"No {label} imagery was available for {start} to {end}.")
     return collection
 
 
-def _sentinel2_mndwi_collection(
-    aoi: "ee.Geometry", start: str, end: str
-) -> "ee.ImageCollection":
-    def _add_mndwi(img: "ee.Image") -> "ee.Image":
+def _sentinel2_mndwi_collection(aoi: ee.Geometry, start: str, end: str) -> ee.ImageCollection:
+    def _add_mndwi(img: ee.Image) -> ee.Image:
         return (
             img.normalizedDifference(["B3", "B11"])
             .rename("ndwi")
@@ -80,20 +76,16 @@ def _sentinel2_mndwi_collection(
         )
 
     base = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterBounds(aoi)
-        .filterDate(start, end)
+        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED").filterBounds(aoi).filterDate(start, end)
     )
     cloud_filtered = base.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
     if _collection_size(cloud_filtered) == 0:
         cloud_filtered = base.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
-    return _require_images(cloud_filtered, "Sentinel-2 surface-water", start, end).map(
-        _add_mndwi
-    )
+    return _require_images(cloud_filtered, "Sentinel-2 surface-water", start, end).map(_add_mndwi)
 
 
 def fetch_rainfall_4w(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     end_date: str,
     scale: int = 1000,
 ) -> xr.Dataset:
@@ -121,7 +113,7 @@ def fetch_rainfall_4w(
 
 
 def fetch_lst_mean(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     start: str,
     end: str,
     scale: int = 1000,
@@ -131,12 +123,8 @@ def fetch_lst_mean(
     Returns Dataset with variable 'temp_mean'.
     """
 
-    def _scale_lst(img: "ee.Image") -> "ee.Image":
-        return (
-            img.multiply(0.02)
-            .subtract(273.15)
-            .copyProperties(img, ["system:time_start"])
-        )
+    def _scale_lst(img: ee.Image) -> ee.Image:
+        return img.multiply(0.02).subtract(273.15).copyProperties(img, ["system:time_start"])
 
     lst_col = _require_images(
         ee.ImageCollection("MODIS/061/MOD11A2")
@@ -157,7 +145,7 @@ def fetch_lst_mean(
 
 
 def fetch_ndwi(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     start: str,
     end: str,
     scale: int = 1000,
@@ -176,7 +164,7 @@ def fetch_ndwi(
     return xr.Dataset({"ndwi": da.rename({"x": "lon", "y": "lat"})})
 
 
-def fetch_elevation(aoi: "ee.Geometry", scale: int = 1000) -> xr.Dataset:
+def fetch_elevation(aoi: ee.Geometry, scale: int = 1000) -> xr.Dataset:
     """USGS SRTM 30 m elevation. Returns Dataset with variable 'elevation'."""
     elev = ee.Image("USGS/SRTMGL1_003").select("elevation").clip(aoi)
     url = elev.getDownloadURL(
@@ -186,9 +174,7 @@ def fetch_elevation(aoi: "ee.Geometry", scale: int = 1000) -> xr.Dataset:
     return xr.Dataset({"elevation": da.rename({"x": "lon", "y": "lat"})})
 
 
-def fetch_pop_density(
-    aoi: "ee.Geometry", year: int = 2020, scale: int = 1000
-) -> xr.Dataset:
+def fetch_pop_density(aoi: ee.Geometry, year: int = 2020, scale: int = 1000) -> xr.Dataset:
     """
     WorldPop GP 100 m population density, log-transformed: log(1 + pop).
     Returns Dataset with variable 'pop_density'.
@@ -210,7 +196,7 @@ def fetch_pop_density(
 
 
 def fetch_ndvi_mean(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     start: str,
     end: str,
     scale: int = 1000,
@@ -220,7 +206,7 @@ def fetch_ndvi_mean(
     Returns Dataset with variable 'ndvi'.
     """
 
-    def _scale_ndvi(img: "ee.Image") -> "ee.Image":
+    def _scale_ndvi(img: ee.Image) -> ee.Image:
         return img.multiply(0.0001).copyProperties(img, ["system:time_start"])
 
     ndvi_col = _require_images(
@@ -241,7 +227,7 @@ def fetch_ndvi_mean(
     return xr.Dataset({"ndvi": da.rename({"x": "lon", "y": "lat"})})
 
 
-def fetch_landcover(aoi: "ee.Geometry", scale: int = 1000) -> xr.Dataset:
+def fetch_landcover(aoi: ee.Geometry, scale: int = 1000) -> xr.Dataset:
     """
     ESA WorldCover v200 normalised to [0, 1].
     Returns Dataset with variable 'land_cover'.
@@ -261,7 +247,7 @@ def fetch_landcover(aoi: "ee.Geometry", scale: int = 1000) -> xr.Dataset:
     return xr.Dataset({"land_cover": da.rename({"x": "lon", "y": "lat"})})
 
 
-def build_feature_datasets(aoi: "ee.Geometry", config: dict) -> dict[str, xr.Dataset]:
+def build_feature_datasets(aoi: ee.Geometry, config: dict) -> dict[str, xr.Dataset]:
     """
     Download all seven disease feature bands from GEE in parallel.
     The seven fetch calls are independent HTTP requests; they run concurrently
@@ -288,7 +274,7 @@ def build_feature_datasets(aoi: "ee.Geometry", config: dict) -> dict[str, xr.Dat
     )
 
 
-def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
+def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
     """
     Assemble the 7-band GEE image used for stratified pixel sampling.
     Band order matches FEATURE_COLS. geometries=True preserved in sampling
@@ -314,12 +300,8 @@ def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
     rain_4w = rain_collection.sum().rename("rainfall_4w").clip(aoi)
 
     # MODIS LST → °C
-    def _scale_lst(img: "ee.Image") -> "ee.Image":
-        return (
-            img.multiply(0.02)
-            .subtract(273.15)
-            .copyProperties(img, ["system:time_start"])
-        )
+    def _scale_lst(img: ee.Image) -> ee.Image:
+        return img.multiply(0.02).subtract(273.15).copyProperties(img, ["system:time_start"])
 
     temp_collection = _require_images(
         ee.ImageCollection("MODIS/061/MOD11A2")
@@ -334,7 +316,7 @@ def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
     temp_mean = temp_collection.mean().rename("temp_mean").clip(aoi)
 
     # Sentinel-2 MNDWI
-    def _add_mndwi(img: "ee.Image") -> "ee.Image":
+    def _add_mndwi(img: ee.Image) -> ee.Image:
         return (
             img.normalizedDifference(["B3", "B11"])
             .rename("ndwi")
@@ -360,7 +342,7 @@ def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
     )
 
     # MODIS NDVI mean
-    def _scale_ndvi(img: "ee.Image") -> "ee.Image":
+    def _scale_ndvi(img: ee.Image) -> ee.Image:
         return img.multiply(0.0001).copyProperties(img, ["system:time_start"])
 
     ndvi_collection = _require_images(
@@ -386,19 +368,17 @@ def build_gee_feature_stack(aoi: "ee.Geometry", config: dict) -> "ee.Image":
         .reproject("EPSG:4326", None, scale)
     )
 
-    return ee.Image.cat(
-        [rain_4w, temp_mean, ndwi, elevation, pop_density, ndvi, land_cover]
-    )
+    return ee.Image.cat([rain_4w, temp_mean, ndwi, elevation, pop_density, ndvi, land_cover])
 
 
-def _fetch_ndvi_monthly(aoi: "ee.Geometry", start: str, end: str) -> pd.DataFrame:
+def _fetch_ndvi_monthly(aoi: ee.Geometry, start: str, end: str) -> pd.DataFrame:
     """Monthly area-mean MODIS NDVI over [start, end]."""
 
-    def _scale_ndvi(img: "ee.Image") -> "ee.Image":
+    def _scale_ndvi(img: ee.Image) -> ee.Image:
         return img.multiply(0.0001).copyProperties(img, ["system:time_start"])
 
-    def _ndvi_mean(img: "ee.Image") -> "ee.Feature":
-        v = img.reduceRegion(ee.Reducer.mean(), aoi, 1000, maxPixels=1e9).get("NDVI")
+    def _ndvi_mean(img: ee.Image) -> ee.Feature:
+        v = img.reduceRegion(ee.Reducer.mean(), aoi, 1000, maxPixels=int(1e9)).get("NDVI")
         return ee.Feature(None, {"date": img.date().format("YYYY-MM"), "ndvi": v})
 
     ndvi_col = (
@@ -408,9 +388,7 @@ def _fetch_ndvi_monthly(aoi: "ee.Geometry", start: str, end: str) -> pd.DataFram
         .select("NDVI")
         .map(_scale_ndvi)
     )
-    records = cast(dict, ee.FeatureCollection(ndvi_col.map(_ndvi_mean)).getInfo())[
-        "features"
-    ]
+    records = cast(dict, ee.FeatureCollection(ndvi_col.map(_ndvi_mean)).getInfo())["features"]
     return (
         pd.DataFrame([f["properties"] for f in records])
         .dropna()
@@ -420,14 +398,12 @@ def _fetch_ndvi_monthly(aoi: "ee.Geometry", start: str, end: str) -> pd.DataFram
     )
 
 
-def _fetch_rain_monthly(aoi: "ee.Geometry", start: str, end: str) -> pd.DataFrame:
+def _fetch_rain_monthly(aoi: ee.Geometry, start: str, end: str) -> pd.DataFrame:
     """Monthly area-mean CHIRPS rainfall over [start, end]."""
-    n_months = int(
-        cast(int, ee.Date(end).difference(ee.Date(start), "month").round().getInfo())
-    )
+    n_months = int(cast(int, ee.Date(end).difference(ee.Date(start), "month").round().getInfo()))
     months = ee.List.sequence(0, n_months - 1)
 
-    def _monthly_rain(offset: "ee.Number") -> "ee.Feature":
+    def _monthly_rain(offset: ee.Number) -> ee.Feature:
         s = ee.Date(start).advance(offset, "month")
         e = s.advance(1, "month")
         v = (
@@ -436,14 +412,12 @@ def _fetch_rain_monthly(aoi: "ee.Geometry", start: str, end: str) -> pd.DataFram
             .filterDate(s, e)
             .select("precipitation")
             .sum()
-            .reduceRegion(ee.Reducer.mean(), aoi, 1000, maxPixels=1e9)
+            .reduceRegion(ee.Reducer.mean(), aoi, 1000, maxPixels=int(1e9))
             .get("precipitation", 0)
         )
         return ee.Feature(None, {"date": s.format("YYYY-MM"), "rain_mm": v})
 
-    records = cast(dict, ee.FeatureCollection(months.map(_monthly_rain)).getInfo())[
-        "features"
-    ]
+    records = cast(dict, ee.FeatureCollection(months.map(_monthly_rain)).getInfo())["features"]
     return (
         pd.DataFrame([f["properties"] for f in records])
         .dropna()
@@ -453,20 +427,14 @@ def _fetch_rain_monthly(aoi: "ee.Geometry", start: str, end: str) -> pd.DataFram
     )
 
 
-def _fetch_lst_monthly(aoi: "ee.Geometry", start: str, end: str) -> pd.DataFrame:
+def _fetch_lst_monthly(aoi: ee.Geometry, start: str, end: str) -> pd.DataFrame:
     """Monthly area-mean MODIS LST (°C) over [start, end]."""
 
-    def _scale_lst(img: "ee.Image") -> "ee.Image":
-        return (
-            img.multiply(0.02)
-            .subtract(273.15)
-            .copyProperties(img, ["system:time_start"])
-        )
+    def _scale_lst(img: ee.Image) -> ee.Image:
+        return img.multiply(0.02).subtract(273.15).copyProperties(img, ["system:time_start"])
 
-    def _lst_mean(img: "ee.Image") -> "ee.Feature":
-        v = img.reduceRegion(ee.Reducer.mean(), aoi, 1000, maxPixels=1e9).get(
-            "LST_Day_1km"
-        )
+    def _lst_mean(img: ee.Image) -> ee.Feature:
+        v = img.reduceRegion(ee.Reducer.mean(), aoi, 1000, maxPixels=int(1e9)).get("LST_Day_1km")
         return ee.Feature(None, {"date": img.date().format("YYYY-MM"), "lst": v})
 
     lst_col = (
@@ -487,7 +455,7 @@ def _fetch_lst_monthly(aoi: "ee.Geometry", start: str, end: str) -> pd.DataFrame
 
 
 def fetch_monthly_timeseries(
-    aoi: "ee.Geometry",
+    aoi: ee.Geometry,
     start: str,
     end: str,
 ) -> dict[str, pd.DataFrame]:
@@ -530,8 +498,8 @@ def _compute_risk_score(df: pd.DataFrame) -> np.ndarray:
 
 
 def sample_training_data(
-    feature_stack: "ee.Image",
-    aoi: "ee.Geometry",
+    feature_stack: ee.Image,
+    aoi: ee.Geometry,
     n_pixels: int = 3000,
     scale: int = 1000,
     seed: int = 42,
@@ -558,12 +526,8 @@ def sample_training_data(
             [
                 {
                     **f["properties"],
-                    "lon": f["geometry"]["coordinates"][0]
-                    if f.get("geometry")
-                    else None,
-                    "lat": f["geometry"]["coordinates"][1]
-                    if f.get("geometry")
-                    else None,
+                    "lon": f["geometry"]["coordinates"][0] if f.get("geometry") else None,
+                    "lat": f["geometry"]["coordinates"][1] if f.get("geometry") else None,
                 }
                 for f in sample_list
             ]

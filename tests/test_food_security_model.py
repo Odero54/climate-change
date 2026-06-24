@@ -1,11 +1,12 @@
 """Tests for food_security/model.py — train_rf, train_xgb, evaluate_models, build_food_security_charts."""
+
 import numpy as np
 import pandas as pd
 import pytest
 from sklearn.model_selection import train_test_split
 
-from food_security.features import FEATURE_COLS, FOOD_CLASSES
-from food_security.model import (
+from climate_change.food_security.features import FEATURE_COLS, FOOD_CLASSES
+from climate_change.food_security.model import (
     VALID_MODEL_TYPES,
     build_food_security_charts,
     evaluate_models,
@@ -77,7 +78,9 @@ class TestBuildFoodSecurityCharts:
         preds = (np.arange(n) % 3).tolist()
         entry = {"label": "test", "f1": 0.7, "accuracy": 0.7, "predictions": preds}
         return {
-            "rf": entry, "xgb": entry, "ensemble": entry,
+            "rf": entry,
+            "xgb": entry,
+            "ensemble": entry,
             "actuals": preds,
         }
 
@@ -87,7 +90,9 @@ class TestBuildFoodSecurityCharts:
             shap_payload={"features": FEATURE_COLS, "mean_abs_shap": [0.1] * 7},
             ndvi_df=pd.DataFrame({"ndvi": [0.4, 0.5]}, index=[0, 1]),
             rain_df=pd.DataFrame({"rain_mm": [80, 90]}, index=[0, 1]),
-            vci_mean=55.0, tci_mean=60.0, vhi_mean=57.5,
+            vci_mean=55.0,
+            tci_mean=60.0,
+            vhi_mean=57.5,
         )
         for key in ("riskDist", "timeSeries", "shap", "indices"):
             assert key in result
@@ -98,7 +103,9 @@ class TestBuildFoodSecurityCharts:
             shap_payload={},
             ndvi_df=pd.DataFrame(),
             rain_df=pd.DataFrame(),
-            vci_mean=50.0, tci_mean=50.0, vhi_mean=50.0,
+            vci_mean=50.0,
+            tci_mean=50.0,
+            vhi_mean=50.0,
         )
         assert result["riskDist"]["labels"] == FOOD_CLASSES
 

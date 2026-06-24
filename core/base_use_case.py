@@ -50,7 +50,7 @@ def _lons_lats(aoi_geojson: dict) -> tuple[list[float], list[float]]:
     return [p[0] for p in ring], [p[1] for p in ring]
 
 
-def _ee_geometry_from_geojson(aoi_geojson: dict) -> "ee.Geometry":
+def _ee_geometry_from_geojson(aoi_geojson: dict) -> ee.Geometry:
     """Convert any GeoJSON type to an ee.Geometry preserving the exact polygon shape.
 
     Handles Feature, FeatureCollection, Polygon, and MultiPolygon inputs.
@@ -58,11 +58,7 @@ def _ee_geometry_from_geojson(aoi_geojson: dict) -> "ee.Geometry":
     """
     import ee  # local import — ee must be initialised before calling this
 
-    geometry = (
-        aoi_geojson.get("geometry")
-        if aoi_geojson.get("type") == "Feature"
-        else aoi_geojson
-    )
+    geometry = aoi_geojson.get("geometry") if aoi_geojson.get("type") == "Feature" else aoi_geojson
     if geometry and geometry.get("type") == "FeatureCollection":
         features = geometry.get("features", [])
         if features:

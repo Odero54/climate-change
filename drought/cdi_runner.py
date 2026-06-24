@@ -196,9 +196,7 @@ def build_drought_charts(features: dict) -> dict:
         "data": seasonal.round(4).tolist(),
     }
 
-    temporal_severity_dist = (
-        df["severity"].value_counts(normalize=True).mul(100).round(1)
-    )
+    temporal_severity_dist = df["severity"].value_counts(normalize=True).mul(100).round(1)
     ds = features.get("cdi_maps")
     latest = ds["CDI"].isel(time=-1).values if ds is not None else np.array([])
     valid = latest[np.isfinite(latest)]
@@ -260,15 +258,9 @@ def compute_spatial_uncertainty(features: dict) -> dict:
             "mean": float(finite_cdi_std.mean()) if finite_cdi_std.size else 0.0,
         },
         "component_spread_stats": {
-            "min": float(finite_component_spread.min())
-            if finite_component_spread.size
-            else 0.0,
-            "max": float(finite_component_spread.max())
-            if finite_component_spread.size
-            else 0.0,
-            "mean": float(finite_component_spread.mean())
-            if finite_component_spread.size
-            else 0.0,
+            "min": float(finite_component_spread.min()) if finite_component_spread.size else 0.0,
+            "max": float(finite_component_spread.max()) if finite_component_spread.size else 0.0,
+            "mean": float(finite_component_spread.mean()) if finite_component_spread.size else 0.0,
         },
     }
 
@@ -372,7 +364,5 @@ def export_cdi_cog(
     prefix = f"drought_{features['start_year']}_{features['end_year']}"
     paths = cdi_stack_to_cog(ds, output_dir=output_dir, prefix=prefix)
     if aoi_geojson:
-        paths = {
-            key: _clip_cog_to_aoi(path, aoi_geojson) for key, path in paths.items()
-        }
+        paths = {key: _clip_cog_to_aoi(path, aoi_geojson) for key, path in paths.items()}
     return paths

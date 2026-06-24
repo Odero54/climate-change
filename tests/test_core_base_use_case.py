@@ -1,10 +1,11 @@
 """Tests for core/base_use_case.py."""
+
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.base_use_case import (
+from climate_change.core.base_use_case import (
     AnalysisConfig,
     AnalysisOutput,
     BaseUseCase,
@@ -14,8 +15,8 @@ from core.base_use_case import (
     _round_floats,
 )
 
-
 # ── _round_floats ─────────────────────────────────────────────────────────────
+
 
 class TestRoundFloats:
     def test_rounds_plain_float(self):
@@ -46,6 +47,7 @@ class TestRoundFloats:
 
 # ── _lons_lats ────────────────────────────────────────────────────────────────
 
+
 class TestLonsLats:
     def test_polygon_geojson(self, simple_polygon_geojson):
         lons, lats = _lons_lats(simple_polygon_geojson)
@@ -63,9 +65,7 @@ class TestLonsLats:
     def test_multipolygon(self):
         mp = {
             "type": "MultiPolygon",
-            "coordinates": [
-                [[[36.0, -1.0], [37.0, -1.0], [37.0, 0.0], [36.0, 0.0], [36.0, -1.0]]]
-            ],
+            "coordinates": [[[[36.0, -1.0], [37.0, -1.0], [37.0, 0.0], [36.0, 0.0], [36.0, -1.0]]]],
         }
         lons, lats = _lons_lats(mp)
         assert len(lons) == 5
@@ -80,6 +80,7 @@ class TestLonsLats:
 
 
 # ── _aoi_geometries ───────────────────────────────────────────────────────────
+
 
 class TestAoiGeometries:
     def test_polygon_returns_list_of_one(self, simple_polygon_geojson):
@@ -104,9 +105,7 @@ class TestAoiGeometries:
     def test_multipolygon_returned(self):
         mp = {
             "type": "MultiPolygon",
-            "coordinates": [
-                [[[36.0, -1.0], [37.0, -1.0], [37.0, 0.0], [36.0, -1.0]]]
-            ],
+            "coordinates": [[[[36.0, -1.0], [37.0, -1.0], [37.0, 0.0], [36.0, -1.0]]]],
         }
         result = _aoi_geometries(mp)
         assert len(result) == 1
@@ -114,6 +113,7 @@ class TestAoiGeometries:
 
 
 # ── _ee_geometry_from_geojson ─────────────────────────────────────────────────
+
 
 class TestEeGeometryFromGeojson:
     def test_polygon_calls_ee_geometry(self, simple_polygon_geojson):
@@ -130,6 +130,7 @@ class TestEeGeometryFromGeojson:
 
 
 # ── AnalysisConfig ─────────────────────────────────────────────────────────────
+
 
 class TestAnalysisConfig:
     def test_default_extra_params_empty(self, simple_polygon_geojson):
@@ -158,6 +159,7 @@ class TestAnalysisConfig:
 
 # ── AnalysisOutput ────────────────────────────────────────────────────────────
 
+
 class TestAnalysisOutput:
     def test_stores_all_fields(self):
         out = AnalysisOutput(
@@ -175,6 +177,7 @@ class TestAnalysisOutput:
 
 
 # ── BaseUseCase._cache_key ────────────────────────────────────────────────────
+
 
 class TestCacheKey:
     def _make_config(self, module="drought", start="2010-01-01", end="2023-12-31"):
@@ -203,23 +206,27 @@ class TestCacheKey:
     def test_same_config_same_key(self):
         cfg1 = self._make_config()
         cfg2 = self._make_config()
-        from core.base_use_case import BaseUseCase as BUC
+        from climate_change.core.base_use_case import BaseUseCase as BUC
+
         assert BUC._cache_key(cfg1) == BUC._cache_key(cfg2)
 
     def test_different_module_different_key(self):
         cfg1 = self._make_config(module="drought")
         cfg2 = self._make_config(module="flood")
-        from core.base_use_case import BaseUseCase as BUC
+        from climate_change.core.base_use_case import BaseUseCase as BUC
+
         assert BUC._cache_key(cfg1) != BUC._cache_key(cfg2)
 
     def test_different_dates_different_key(self):
         cfg1 = self._make_config(start="2010-01-01")
         cfg2 = self._make_config(start="2015-01-01")
-        from core.base_use_case import BaseUseCase as BUC
+        from climate_change.core.base_use_case import BaseUseCase as BUC
+
         assert BUC._cache_key(cfg1) != BUC._cache_key(cfg2)
 
 
 # ── BaseUseCase.execute ───────────────────────────────────────────────────────
+
 
 class TestBaseUseCaseExecute:
     def _make_use_case(self, output):
@@ -238,13 +245,21 @@ class TestBaseUseCaseExecute:
 
     def test_execute_returns_output(self, simple_polygon_geojson):
         expected = AnalysisOutput(
-            module="drought", geojson={}, raster_path=None,
-            stats={}, shap=None, charts={}, metadata={},
+            module="drought",
+            geojson={},
+            raster_path=None,
+            stats={},
+            shap=None,
+            charts={},
+            metadata={},
         )
         uc = self._make_use_case(expected)
         cfg = AnalysisConfig(
-            module="drought", aoi_geojson=simple_polygon_geojson,
-            start_date="2010-01-01", end_date="2020-01-01", country="Kenya",
+            module="drought",
+            aoi_geojson=simple_polygon_geojson,
+            start_date="2010-01-01",
+            end_date="2020-01-01",
+            country="Kenya",
         )
         result = asyncio.run(uc.execute(cfg))
         assert result is expected
@@ -263,14 +278,22 @@ class TestBaseUseCaseExecute:
 
             def run_model(self, features, config):
                 return AnalysisOutput(
-                    module="drought", geojson={}, raster_path=None,
-                    stats={}, shap=None, charts={}, metadata={},
+                    module="drought",
+                    geojson={},
+                    raster_path=None,
+                    stats={},
+                    shap=None,
+                    charts={},
+                    metadata={},
                 )
 
         uc = _CountingImpl(MagicMock())
         cfg = AnalysisConfig(
-            module="drought", aoi_geojson=simple_polygon_geojson,
-            start_date="2010-01-01", end_date="2020-01-01", country="Kenya",
+            module="flood",  # different module → different cache key from other tests
+            aoi_geojson=simple_polygon_geojson,
+            start_date="2011-01-01",
+            end_date="2021-01-01",
+            country="Ethiopia",
         )
         asyncio.run(uc.execute(cfg))
         asyncio.run(uc.execute(cfg))
