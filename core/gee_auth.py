@@ -65,7 +65,12 @@ What is NOT stored here:
 
 from __future__ import annotations
 
+import os
 import threading
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 _lock = threading.Lock()
 
@@ -88,12 +93,6 @@ def _resolve_project(project: str, *, allow_prompt: bool = True) -> str:
     project raises ``ValueError`` immediately rather than blocking on
     ``input()``.
     """
-    import os
-
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
     if project:
         return project
 
@@ -209,11 +208,7 @@ def startup_init_gee() -> None:
     server still starts in environments where GEE is not yet configured.
     """
     import logging
-    import os
 
-    from dotenv import load_dotenv
-
-    load_dotenv()
     logger = logging.getLogger(__name__)
 
     project = os.environ.get("GEE_PROJECT", "").strip()

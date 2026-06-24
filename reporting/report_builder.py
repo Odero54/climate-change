@@ -20,7 +20,9 @@ _log = logging.getLogger(__name__)
 
 import matplotlib
 import numpy as np
+import pandas as pd
 import requests
+from matplotlib import dates as mdates
 from matplotlib.colors import ListedColormap
 from PIL import Image as PILImage
 
@@ -1019,6 +1021,9 @@ class ReportBuilder:
         if not ts.get("labels") or not ts.get("datasets"):
             return None
         labels = ts["labels"]
+        dates = pd.to_datetime(labels, errors="coerce")
+        use_dates = not dates.isna().any()
+        x_values = dates if use_dates else np.arange(len(labels))
         ds_map = {d["label"]: d["data"] for d in ts["datasets"]}
         colors_map = {
             "CDI": "#C0392B",
@@ -1028,13 +1033,11 @@ class ReportBuilder:
         }
 
         fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
-        idx = range(len(labels))
-
         ax = axes[0]
         for key in ("PDI", "TDI", "VDI"):
             if key in ds_map:
                 ax.plot(
-                    idx,
+                    x_values,
                     ds_map[key],
                     label=key,
                     color=colors_map[key],
@@ -1051,20 +1054,27 @@ class ReportBuilder:
         if "CDI" in ds_map:
             cdi_vals = ds_map["CDI"]
             ax2.fill_between(
-                idx,
+                x_values,
                 cdi_vals,
                 1.0,
                 where=[v < 1.0 for v in cdi_vals],
                 alpha=0.25,
                 color="#E74C3C",
             )
-            ax2.plot(idx, cdi_vals, color="#C0392B", linewidth=1.5, label="CDI")
+            ax2.plot(x_values, cdi_vals, color="#C0392B", linewidth=1.5, label="CDI")
         ax2.axhline(1.0, color="grey", linestyle="--", linewidth=0.8)
         ax2.set_ylabel("CDI")
         ax2.set_title("Composite Drought Index (CDI)", fontsize=11)
-        step = max(1, len(labels) // 12)
-        ax2.set_xticks(range(0, len(labels), step))
-        ax2.set_xticklabels(labels[::step], rotation=45, ha="right", fontsize=7)
+        if use_dates:
+            ax2.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=10))
+            ax2.xaxis.set_major_formatter(
+                mdates.ConciseDateFormatter(ax2.xaxis.get_major_locator())
+            )
+            ax2.set_xlabel("Date")
+        else:
+            step = max(1, len(labels) // 12)
+            ax2.set_xticks(range(0, len(labels), step))
+            ax2.set_xticklabels(labels[::step], rotation=45, ha="right", fontsize=7)
         if "CDI" in ds_map:
             ax2.legend(loc="upper right", fontsize=8)
 
@@ -1543,20 +1553,87 @@ class ReportBuilder:
         labels = ts_data.get("labels", [])
         if not datasets or not labels:
             return None
+        dates = pd.to_datetime(labels, errors="coerce")
+        use_dates = not dates.isna().any()
+        x_values = dates if use_dates else np.arange(len(labels))
         n = len(datasets)
         fig, axes = plt.subplots(n, 1, figsize=(12, 3 * n), sharex=True)
         if n == 1:
             axes = [axes]
         for ax, ds in zip(axes, datasets):
-            vals = [v if v is not None else float("nan") for v in ds["data"]]
+            vals = np.asarray(
+                [v if v is not None else float("nan") for v in ds["data"]],
+                dtype=float,
+            )
             col = ds.get("color", "#2980B9")
-            ax.plot(range(len(labels)), vals, color=col, linewidth=1.5, label=ds["label"])
-            ax.fill_between(range(len(labels)), vals, alpha=0.12, color=col)
-            ax.set_ylabel(ds["label"], fontsize=9)
+            label = str(ds["label"])
+            label_lower = label.lower()
+
+            if "rain" in label_lower:
+                width = 20 if use_dates else 0.8
+                ax.bar(
+                    x_values,
+                    vals,
+                    width=width,
+                    color=col,
+                    alpha=0.72,
+                    label=label,
+                )
+            else:
+                ax.plot(
+                    x_values,
+                    vals,
+                    color=col,
+                    linewidth=1.5,
+                    marker="o",
+                    markersize=2.5,
+                    label=label,
+                )
+                valid = np.isfinite(vals)
+                if valid.sum() >= 2 and ("ndvi" in label_lower or "lst" in label_lower):
+                    positions = np.arange(len(vals), dtype=float)
+                    slope, intercept = np.polyfit(positions[valid], vals[valid], 1)
+                    unit = " °C/year" if "lst" in label_lower else "/year"
+                    ax.plot(
+                        x_values,
+                        intercept + slope * positions,
+                        color=col,
+                        linewidth=1.7,
+                        linestyle="--",
+                        alpha=0.9,
+                        label=f"Trend ({slope * 12:+.4f}{unit})",
+                    )
+
+                finite = vals[valid]
+                if finite.size and "ndvi" in label_lower:
+                    padding = max(0.03, float(np.ptp(finite)) * 0.15)
+                    ax.set_ylim(
+                        max(-1.0, float(finite.min()) - padding),
+                        min(1.0, float(finite.max()) + padding),
+                    )
+
+            if "ndvi" in label_lower:
+                y_label = "NDVI (unitless)"
+            elif "rain" in label_lower:
+                y_label = "Rainfall (mm)"
+            elif "lst" in label_lower:
+                y_label = "LST (°C)"
+            else:
+                y_label = label
+            ax.set_ylabel(y_label, fontsize=9)
+            ax.grid(axis="y", alpha=0.22)
             ax.legend(loc="upper right", fontsize=8)
-        step = max(1, len(labels) // 12)
-        axes[-1].set_xticks(range(0, len(labels), step))
-        axes[-1].set_xticklabels(labels[::step], rotation=45, ha="right", fontsize=7)
+
+        if use_dates:
+            axes[-1].xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=10))
+            axes[-1].xaxis.set_major_formatter(
+                mdates.ConciseDateFormatter(axes[-1].xaxis.get_major_locator())
+            )
+            axes[-1].set_xlabel("Date")
+        else:
+            step = max(1, len(labels) // 12)
+            axes[-1].set_xticks(range(0, len(labels), step))
+            axes[-1].set_xticklabels(labels[::step], rotation=45, ha="right", fontsize=7)
         axes[0].set_title(title, fontsize=11)
         plt.tight_layout()
         return self._fig_to_image(fig)

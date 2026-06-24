@@ -1,4 +1,5 @@
 import logging
+from inspect import signature
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +10,9 @@ from drought_monitoring.gee import (
     fetch_era5_precip,
     fetch_era5_temp,
     fetch_modis_ndvi,
-    yearly_drought_maps,
+)
+from drought_monitoring.gee import (
+    yearly_drought_maps as _legacy_yearly_drought_maps,
 )
 from drought_monitoring.plot import classify_cdi
 from rasterio.features import geometry_mask
@@ -131,6 +134,95 @@ def _temporally_fill_dataset(ds):
     return filled
 
 
+def _normalize_spatial_coords(ds):
+    """Use the coordinate names expected by the drought output pipeline."""
+    rename = {}
+    if "x" in ds.dims:
+        rename["x"] = "lon"
+    elif "longitude" in ds.dims:
+        rename["longitude"] = "lon"
+    if "y" in ds.dims:
+        rename["y"] = "lat"
+    elif "latitude" in ds.dims:
+        rename["latitude"] = "lat"
+    return ds.rename(rename) if rename else ds
+
+
+def _yearly_drought_maps_xee_v1(
+    aoi,
+    bbox: list[float],
+    start_year: int,
+    end_year: int,
+    scale: float = 0.1,
+):
+    """Build annual drought maps with the explicit grid API introduced in xee 0.1."""
+    import ee
+    import shapely.geometry
+    import xee  # noqa: F401 — registers the xarray ``ee`` backend
+    from drought_monitoring.spatial import yearly_drought_maps as spatial_yearly_maps
+    from xee.helpers import fit_geometry
+
+    geometry = ee.Geometry(aoi) if isinstance(aoi, dict) else ee.Geometry.Rectangle(bbox)
+    start = f"{start_year}-01-01"
+    end = f"{end_year}-12-31"
+    chunks = {"time": 12}
+    grid = fit_geometry(
+        shapely.geometry.box(*bbox),
+        grid_crs="EPSG:4326",
+        grid_scale=(scale, -scale),
+    )
+
+    era5_collection = (
+        ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY_AGGR")
+        .filterDate(start, end)
+        .filterBounds(geometry)
+        .select(["total_precipitation_sum", "temperature_2m"])
+    )
+    modis_collection = (
+        ee.ImageCollection("MODIS/061/MOD13A3")
+        .filterDate(start, end)
+        .filterBounds(geometry)
+        .select("NDVI")
+    )
+
+    era5 = _normalize_spatial_coords(
+        xr.open_dataset(era5_collection, engine="ee", chunks=chunks, **grid)
+    )
+    modis = _normalize_spatial_coords(
+        xr.open_dataset(modis_collection, engine="ee", chunks=chunks, **grid)
+    )
+
+    precip = era5["total_precipitation_sum"] * 1000.0
+    temp = era5["temperature_2m"] - 273.15
+    ndvi = (modis["NDVI"] * 0.0001).interp_like(precip, method="linear")
+    return spatial_yearly_maps(
+        precip,
+        temp,
+        ndvi,
+        window=3,
+        weights=(0.50, 0.25, 0.25),
+    )
+
+
+def _yearly_drought_maps(
+    aoi,
+    bbox: list[float],
+    start_year: int,
+    end_year: int,
+):
+    """Dispatch across the legacy and current xee backend APIs."""
+    from xee.ext import EarthEngineBackendEntrypoint
+
+    parameters = signature(EarthEngineBackendEntrypoint.open_dataset).parameters
+    if "scale" in parameters:
+        return _legacy_yearly_drought_maps(
+            aoi,
+            start_year=start_year,
+            end_year=end_year,
+        )
+    return _yearly_drought_maps_xee_v1(aoi, bbox, start_year, end_year)
+
+
 def run_cdi_pipeline(raw_data: dict) -> dict:
     """
     Full CDI pipeline.
@@ -151,7 +243,12 @@ def run_cdi_pipeline(raw_data: dict) -> dict:
 
     # Annual pixel-wise spatial CDI maps
     # end_year - 1 because the current partial year has no complete annual map
-    ds = yearly_drought_maps(aoi, start_year=start_year, end_year=end_year - 1)
+    ds = _yearly_drought_maps(
+        aoi,
+        bbox,
+        start_year=start_year,
+        end_year=end_year - 1,
+    )
     ds = _temporally_fill_dataset(ds)
     ds = _mask_dataset_to_aoi(ds, raw_data.get("aoi_geojson"))
     return {
