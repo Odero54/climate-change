@@ -46,7 +46,6 @@ from climate_change.registry import (
     UseCaseInfo,
     get_use_case_info,
 )
-from climate_change.reporting import ReportBuilder
 
 
 def __getattr__(name: str):
@@ -74,6 +73,10 @@ def __getattr__(name: str):
         from climate_change.land_degradation import LandDegradationUseCase
 
         return LandDegradationUseCase
+    if name == "ReportBuilder":
+        from climate_change.reporting import ReportBuilder
+
+        return ReportBuilder
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
