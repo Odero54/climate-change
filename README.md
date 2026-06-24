@@ -83,6 +83,25 @@ the selected model.
 
 ## Installation
 
+Install the published package from PyPI:
+
+```bash
+python -m pip install climate-change
+```
+
+With `uv`:
+
+```bash
+uv add climate-change
+```
+
+The distribution name uses a hyphen, while the Python import uses an
+underscore:
+
+```python
+from climate_change import run_analysis
+```
+
 ### Install from source with `uv`
 
 ```bash
@@ -209,14 +228,16 @@ output = await run_analysis(...)
 
 ## Example notebooks
 
-The [`example-usage`](example-usage/) directory contains a runnable notebook
+The
+[`example-usage`](https://github.com/Odero54/climate-change/tree/main/example-usage)
+directory contains a runnable notebook
 for each analysis module:
 
-- [Drought monitoring and early warning](example-usage/01_drought_analysis.ipynb)
-- [Flood-risk monitoring and mitigation](example-usage/02_flood_risk_analysis.ipynb)
-- [Food-security assessment](example-usage/03_food_security_analysis.ipynb)
-- [Climate-driven disease surveillance](example-usage/04_disease_risk_analysis.ipynb)
-- [Land-degradation and rangeland dynamics](example-usage/05_land_degradation_analysis.ipynb)
+- [Drought monitoring and early warning](https://github.com/Odero54/climate-change/blob/main/example-usage/01_drought_analysis.ipynb)
+- [Flood-risk monitoring and mitigation](https://github.com/Odero54/climate-change/blob/main/example-usage/02_flood_risk_analysis.ipynb)
+- [Food-security assessment](https://github.com/Odero54/climate-change/blob/main/example-usage/03_food_security_analysis.ipynb)
+- [Climate-driven disease surveillance](https://github.com/Odero54/climate-change/blob/main/example-usage/04_disease_risk_analysis.ipynb)
+- [Land-degradation and rangeland dynamics](https://github.com/Odero54/climate-change/blob/main/example-usage/05_land_degradation_analysis.ipynb)
 
 Launch Jupyter from the repository:
 
@@ -276,7 +297,8 @@ Common `extra_params` include:
 
 Flood analyses also accept event-specific pre-flood, post-flood, rainfall, and
 surface-water date windows. See
-[`FloodRiskUseCase`](flood/use_case.py) for the complete configuration schema.
+[`FloodRiskUseCase`](https://github.com/Odero54/climate-change/blob/main/flood/use_case.py)
+for the complete configuration schema.
 
 ## Result structure
 

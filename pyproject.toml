@@ -3,10 +3,11 @@ name = "climate-change"
 version = "1.0.0"
 description = "Climate Resilience and Adaptation Decision Support System — multi-hazard EO analysis (drought, flood, food security, disease, land degradation)"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10,<3.14"
 authors = [
-    { name = "geoges" },
+    { name = "George Odero" },
 ]
 keywords = [
     "climate-change",
@@ -22,7 +23,6 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: GIS",
     "Topic :: Scientific/Engineering :: Atmospheric Science",
@@ -58,6 +58,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/Odero54/climate-change"
+"Source Code" = "https://github.com/Odero54/climate-change"
+"Documentation" = "https://github.com/Odero54/climate-change#readme"
 "Bug Tracker" = "https://github.com/Odero54/climate-change/issues"
 
 [project.optional-dependencies]
