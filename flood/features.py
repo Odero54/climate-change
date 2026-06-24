@@ -557,7 +557,7 @@ def _sample_labeled_pixels(
                     geometries=False,
                     tileScale=tile_scale,
                 )
-                return sample_flooded.merge(sample_dry).getInfo()["features"]  # type: ignore[index]
+                return (sample_flooded.merge(sample_dry).getInfo() or {}).get("features", [])
             except Exception as exc:
                 last_exc = exc
                 if "User memory limit exceeded" not in str(exc):

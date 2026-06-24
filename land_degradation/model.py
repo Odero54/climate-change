@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import lightgbm as lgb
 import numpy as np
@@ -24,6 +24,39 @@ RF_MIN_SAMPLES_LEAF = 4
 LGBM_N_ESTIMATORS = 200
 LGBM_LR = 0.05
 LGBM_NUM_LEAVES = 63
+
+
+class FeatureNamedLGBMClassifier(lgb.LGBMClassifier):
+    """LightGBM classifier that preserves feature names for array inputs."""
+
+    @staticmethod
+    def _with_feature_names(X: Any) -> pd.DataFrame:
+        if isinstance(X, pd.DataFrame):
+            return X
+        values = np.asarray(X)
+        return pd.DataFrame(values, columns=FEATURE_COLS[: values.shape[1]])
+
+    def predict(
+        self,
+        X: Any,
+        raw_score: bool = False,
+        start_iteration: int = 0,
+        num_iteration: int | None = None,
+        pred_leaf: bool = False,
+        pred_contrib: bool = False,
+        validate_features: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        return super().predict(
+            self._with_feature_names(X),
+            raw_score=raw_score,
+            start_iteration=start_iteration,
+            num_iteration=num_iteration,
+            pred_leaf=pred_leaf,
+            pred_contrib=pred_contrib,
+            validate_features=validate_features,
+            **kwargs,
+        )
 
 
 def train_rf(
@@ -52,7 +85,7 @@ def train_lgbm(
     cv_folds: int = 5,
 ) -> tuple[lgb.LGBMClassifier, dict]:
     """Fit a balanced LightGBM classifier and report CV weighted F1. Returns (model, metadata)."""
-    clf = lgb.LGBMClassifier(
+    clf = FeatureNamedLGBMClassifier(
         n_estimators=LGBM_N_ESTIMATORS,
         learning_rate=LGBM_LR,
         num_leaves=LGBM_NUM_LEAVES,
@@ -61,9 +94,10 @@ def train_lgbm(
         n_jobs=-1,
         verbosity=-1,
     )
-    clf.fit(X_train, y_train)
+    X_train_df = pd.DataFrame(X_train, columns=FEATURE_COLS[: X_train.shape[1]])
+    clf.fit(X_train_df, y_train)
     cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-    cv_f1 = cross_val_score(clf, X_train, y_train, cv=cv, scoring="f1_weighted")  # pyright: ignore[reportArgumentType]
+    cv_f1 = cross_val_score(clf, X_train_df, y_train, cv=cv, scoring="f1_weighted")  # pyright: ignore[reportArgumentType]
     return clf, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
 
 

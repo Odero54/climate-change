@@ -41,7 +41,17 @@ class DroughtLSTM(nn.Module):
         horizon: int = FORECAST_H,
     ):
         super().__init__()
-        self.lstm = nn.LSTM(n_features, hidden, layers, batch_first=True, dropout=0.2)
+        # PyTorch only applies recurrent dropout between stacked LSTM layers.
+        # Passing a non-zero value for a single layer has no effect and emits a
+        # warning, so disable it for that configuration.
+        recurrent_dropout = 0.2 if layers > 1 else 0.0
+        self.lstm = nn.LSTM(
+            n_features,
+            hidden,
+            layers,
+            batch_first=True,
+            dropout=recurrent_dropout,
+        )
         self.fc = nn.Linear(hidden, horizon)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

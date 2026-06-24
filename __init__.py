@@ -15,10 +15,16 @@ Usage:
     )
 """
 
+# pyright: reportMissingImports=false
+
 from __future__ import annotations
 
 # Use absolute imports so this file is safe to load without a package context
 # (pytest traverses parent __init__.py files during test discovery).
+#
+# Setuptools maps ``climate_change`` to this repository root with an editable
+# import hook. Pylance cannot follow that hook, hence the file-scoped directive
+# above; Python, pytest, and mypy all resolve these imports normally.
 from climate_change.ai_interpreter import (
     AIInterpreter,
     build_interpretation_prompt,

@@ -94,7 +94,7 @@ def fetch_ndvi_timeseries(
         return img.multiply(0.0001).copyProperties(img, ["system:time_start"])
 
     def _mean_feat(img: ee.Image) -> ee.Feature:
-        v = img.reduceRegion(ee.Reducer.mean(), aoi, 500, maxPixels=1e9)  # type: ignore[arg-type]
+        v = img.reduceRegion(ee.Reducer.mean(), aoi, 500, maxPixels=int(1e9))
         return cast("ee.Feature", ee.Feature(None, v).set("date", img.date().format("YYYY-MM")))
 
     modis = (
@@ -413,7 +413,7 @@ def sample_training_data(
         dropNulls=True,
         geometries=False,
     )
-    records = sample.getInfo()["features"]  # type: ignore[index]
+    records = (sample.getInfo() or {}).get("features", [])
     df = pd.DataFrame([f["properties"] for f in records]).dropna()
     df = df[FEATURE_COLS].copy()
 

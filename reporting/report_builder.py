@@ -11,7 +11,7 @@ import io
 import logging
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -248,7 +248,7 @@ class ReportBuilder:
         country = self._location_label(output)
         start = output.metadata.get("start_date", "—")
         end = output.metadata.get("end_date", "—")
-        generated = datetime.utcnow().strftime("%d %B %Y, %H:%M UTC")
+        generated = datetime.now(timezone.utc).strftime("%d %B %Y, %H:%M UTC")
 
         cover_data = [
             ["AOI / Region", country],
@@ -1044,7 +1044,8 @@ class ReportBuilder:
         ax.axhline(1.0, color="grey", linestyle="--", linewidth=0.8)
         ax.set_ylabel("Sub-index value")
         ax.set_title("Drought Sub-Index Time Series (PDI · TDI · VDI)", fontsize=11)
-        ax.legend(loc="upper right", fontsize=8)
+        if any(key in ds_map for key in ("PDI", "TDI", "VDI")):
+            ax.legend(loc="upper right", fontsize=8)
 
         ax2 = axes[1]
         if "CDI" in ds_map:
@@ -1064,7 +1065,8 @@ class ReportBuilder:
         step = max(1, len(labels) // 12)
         ax2.set_xticks(range(0, len(labels), step))
         ax2.set_xticklabels(labels[::step], rotation=45, ha="right", fontsize=7)
-        ax2.legend(loc="upper right", fontsize=8)
+        if "CDI" in ds_map:
+            ax2.legend(loc="upper right", fontsize=8)
 
         plt.tight_layout()
         return self._fig_to_image(fig)
