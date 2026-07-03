@@ -69,6 +69,20 @@ def _require_images(
     return collection
 
 
+def _require_population_image(collection: ee.ImageCollection, year: int) -> ee.Image:
+    """
+    Guard against an empty WorldPop filter result. Calling `.first()` on an empty
+    collection silently yields a bandless image — every downstream `.select()` on
+    it then returns an all-masked band, so `.sample()` drops the property entirely
+    for every sampled point (rather than raising or producing NaNs). That surfaces
+    much later as a confusing pandas KeyError instead of a clear data-availability
+    error, so we fail fast here instead.
+    """
+    if _collection_size(collection) == 0:
+        raise ValueError(f"No WorldPop population data was available for {year}.")
+    return collection.first()
+
+
 def _sentinel2_mndwi_collection(aoi: ee.Geometry, start: str, end: str) -> ee.ImageCollection:
     def _add_mndwi(img: ee.Image) -> ee.Image:
         return (
@@ -181,14 +195,10 @@ def fetch_pop_density(aoi: ee.Geometry, year: int = 2020, scale: int = 1000) -> 
     WorldPop GP 100 m population density, log-transformed: log(1 + pop).
     Returns Dataset with variable 'pop_density'.
     """
-    pop_raw = (
-        ee.ImageCollection("WorldPop/GP/100m/pop")
-        .filterBounds(aoi)
-        .filter(ee.Filter.eq("year", year))
-        .first()
-        .select("population")
-        .clip(aoi)
+    pop_collection = (
+        ee.ImageCollection("WorldPop/GP/100m/pop").filterBounds(aoi).filter(ee.Filter.eq("year", year))
     )
+    pop_raw = _require_population_image(pop_collection, year).select("population").clip(aoi)
     pop_log = pop_raw.add(1).log().rename("pop_density")
     url = pop_log.getDownloadURL(
         {"region": aoi, "scale": scale, "crs": "EPSG:4326", "format": "GEO_TIFF"}
@@ -331,11 +341,11 @@ def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
     elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").clip(aoi)
 
     # WorldPop log(1 + pop)
+    pop_collection = (
+        ee.ImageCollection("WorldPop/GP/100m/pop").filterBounds(aoi).filter(ee.Filter.eq("year", 2020))
+    )
     pop_density = (
-        ee.ImageCollection("WorldPop/GP/100m/pop")
-        .filterBounds(aoi)
-        .filter(ee.Filter.eq("year", 2020))
-        .first()
+        _require_population_image(pop_collection, 2020)
         .select("population")
         .add(1)
         .log()
@@ -527,20 +537,42 @@ def sample_training_data(
         dropNulls=False,
     )
     sample_list = cast(dict, samples.getInfo())["features"]
-    df = (
-        pd.DataFrame(
-            [
-                {
-                    **f["properties"],
-                    "lon": f["geometry"]["coordinates"][0] if f.get("geometry") else None,
-                    "lat": f["geometry"]["coordinates"][1] if f.get("geometry") else None,
-                }
-                for f in sample_list
-            ]
+    if not sample_list:
+        raise ValueError(
+            "No pixels could be sampled for this area — it may be too small, or "
+            "entirely water/built-up land that gets excluded from disease risk sampling."
         )
-        .dropna(subset=FEATURE_COLS + ["lon", "lat"])[FEATURE_COLS + ["lon", "lat"]]
+
+    raw_df = pd.DataFrame(
+        [
+            {
+                **f["properties"],
+                "lon": f["geometry"]["coordinates"][0] if f.get("geometry") else None,
+                "lat": f["geometry"]["coordinates"][1] if f.get("geometry") else None,
+            }
+            for f in sample_list
+        ]
+    )
+    # A band whose pixels are entirely masked over this AOI (e.g. a data-source
+    # gap) never appears as a property on any sampled point, so the column is
+    # absent altogether rather than merely NaN — dropna(subset=...) would raise
+    # an opaque KeyError. Surface it as a clear, actionable message instead.
+    missing_cols = [c for c in FEATURE_COLS if c not in raw_df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"No data was available for: {', '.join(missing_cols)} over this area "
+            "and date range. Try a different area or a shorter/different date range."
+        )
+
+    df = (
+        raw_df.dropna(subset=FEATURE_COLS + ["lon", "lat"])[FEATURE_COLS + ["lon", "lat"]]
         .reset_index(drop=True)
     )
+    if df.empty:
+        raise ValueError(
+            "All sampled pixels had incomplete feature data for this area and date "
+            "range. Try a different area or a shorter/different date range."
+        )
 
     scores = _compute_risk_score(df)
     t33 = float(np.percentile(scores, RISK_PERCENTILES[0] * 100))
