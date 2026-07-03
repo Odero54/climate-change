@@ -11,8 +11,12 @@ from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 
 from climate_change.core.base_use_case import _aoi_geometries
+from climate_change.core.landcover_mask import WATER_CLASS
 
 from .features import FEATURE_COLS, RISK_INT, align_datasets
+
+# _build_static_image() normalises ESA WorldCover class codes via (code / 10) - 1
+_WATER_LANDCOVER = (WATER_CLASS / 10.0) - 1.0
 from .model import VALID_MODEL_TYPES, classify_flood_risk
 
 _log = logging.getLogger(__name__)
@@ -102,6 +106,9 @@ def export_flood_cog(
     )  # (10, n_lat, n_lon)
     X_full = bands.reshape(len(FEATURE_COLS), -1).T  # (n_pixels, 10)
     valid_mask = ~np.isnan(X_full).any(axis=1)
+    # Permanent water bodies (ESA WorldCover) are excluded from flood-risk output.
+    water = np.isclose(landcover_.reshape(-1), _WATER_LANDCOVER)
+    valid_mask &= ~water
 
     transform = terrain["elevation"].rio.transform()
     crs = terrain["elevation"].rio.crs or "EPSG:4326"

@@ -12,6 +12,8 @@ import xarray as xr
 from requests import HTTPError
 from xarray.core.types import InterpOptions
 
+from climate_change.core.landcover_mask import BUILTUP_CLASS, WATER_CLASS, exclusion_mask
+
 FEATURE_COLS: list[str] = [
     "vci",  # Vegetation Condition Index (0–100)
     "tci",  # Temperature Condition Index (0–100)
@@ -436,7 +438,11 @@ def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
         .reproject("EPSG:4326", None, scale)
     )
 
-    return ee.Image.cat([vci, tci, rain_anom, ndvi_slope, mndwi, slope, land_cover])
+    stack = ee.Image.cat([vci, tci, rain_anom, ndvi_slope, mndwi, slope, land_cover])
+    # Exclude water bodies and built-up areas from feature preparation/sampling —
+    # food-insecurity risk only applies to agricultural/vegetated land.
+    valid_land = exclusion_mask(aoi, [WATER_CLASS, BUILTUP_CLASS])
+    return stack.updateMask(valid_land)
 
 
 def fetch_ndvi_monthly_timeseries(

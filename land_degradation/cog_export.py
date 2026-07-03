@@ -10,6 +10,8 @@ from rasterio.features import geometry_mask
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
+from climate_change.core.landcover_mask import WATER_CLASS
+
 from .features import FEATURE_COLS, align_datasets
 
 
@@ -54,6 +56,9 @@ def export_degradation_cog(
 
     X = np.column_stack([feat_arrays.get(c, np.full(n_px, np.nan)) for c in FEATURE_COLS])
     valid_mask = ~np.any(np.isnan(X), axis=1)
+    # "land_cover" here holds raw ESA WorldCover class codes — exclude water bodies.
+    water = np.isclose(feat_arrays.get("land_cover", np.full(n_px, np.nan)), WATER_CLASS)
+    valid_mask &= ~water
     X_valid = scaler.transform(X[valid_mask])
 
     if model_type == "rf":

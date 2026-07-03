@@ -12,6 +12,8 @@ import xarray as xr
 from requests import HTTPError
 from xarray.core.types import InterpOptions
 
+from climate_change.core.landcover_mask import WATER_CLASS, exclusion_mask
+
 FEATURE_COLS: list[str] = [
     "ndvi_slope",
     "ndvi_mean",
@@ -361,7 +363,7 @@ def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
         .reproject("EPSG:4326", None, scale)
     )
 
-    return ee.Image.cat(
+    stack = ee.Image.cat(
         [
             ndvi_slope,
             ndvi_mean,
@@ -373,6 +375,10 @@ def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
             lc_norm,
         ]
     )
+    # Exclude water bodies from feature preparation/sampling — land degradation
+    # is not a meaningful concept over permanent water.
+    valid_land = exclusion_mask(aoi, [WATER_CLASS])
+    return stack.updateMask(valid_land)
 
 
 def _compute_deg_score(df: pd.DataFrame) -> np.ndarray:

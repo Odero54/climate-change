@@ -18,6 +18,7 @@ from drought_monitoring.plot import classify_cdi
 from rasterio.features import geometry_mask
 
 from climate_change.core.base_use_case import _aoi_geometries
+from climate_change.core.landcover_mask import WATER_CLASS, fetch_landcover_class_array
 
 _log = logging.getLogger(__name__)
 
@@ -250,6 +251,7 @@ def run_cdi_pipeline(raw_data: dict) -> dict:
         end_year=end_year - 1,
     )
     ds = _temporally_fill_dataset(ds)
+    ds = _mask_dataset_water_bodies(ds, raw_data.get("aoi_geojson"))
     ds = _mask_dataset_to_aoi(ds, raw_data.get("aoi_geojson"))
     return {
         "cdi_maps": ds,
@@ -382,6 +384,35 @@ def _dataset_transform(ds):
         len(lons),
         len(lats),
     )
+
+
+def _mask_dataset_water_bodies(ds, aoi_geojson: dict | None):
+    """
+    Mask out ESA WorldCover permanent water bodies from the spatial CDI dataset.
+    Drought severity is meaningless over open water, so those pixels are set to
+    NaN before the dataset feeds typology clustering, uncertainty maps, and the
+    vectorised GeoJSON output.
+    """
+    if not aoi_geojson:
+        return ds
+
+    try:
+        landcover = fetch_landcover_class_array(aoi_geojson)
+    except Exception:
+        _log.warning("ESA WorldCover fetch failed; skipping drought water-body mask", exc_info=True)
+        return ds
+
+    lat_dim, lon_dim = _spatial_dims(ds)
+    landcover_aligned = landcover.rename({"lat": lat_dim, "lon": lon_dim}).interp(
+        {lat_dim: ds[lat_dim], lon_dim: ds[lon_dim]}, method="nearest"
+    )
+    water_mask = xr.DataArray(
+        np.isclose(landcover_aligned.values, WATER_CLASS),
+        dims=(lat_dim, lon_dim),
+        coords={lat_dim: ds[lat_dim], lon_dim: ds[lon_dim]},
+        name="water_body",
+    )
+    return ds.where(~water_mask)
 
 
 def _mask_dataset_to_aoi(ds, aoi_geojson: dict | None):

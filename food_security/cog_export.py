@@ -12,8 +12,13 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
 from climate_change.core.base_use_case import _aoi_geometries
+from climate_change.core.landcover_mask import BUILTUP_CLASS, WATER_CLASS
 
 from .features import FEATURE_COLS, align_datasets
+
+# fetch_landcover() normalises ESA WorldCover class codes to [0, 1] (code / 100)
+_WATER_LAND_COVER = WATER_CLASS / 100
+_BUILTUP_LAND_COVER = BUILTUP_CLASS / 100
 
 _log = logging.getLogger(__name__)
 
@@ -46,6 +51,11 @@ def predict_food_security_grid(
     bands = np.stack([vci, tci, rain_anom, ndvi_slope, mndwi, slope, lc], axis=0)
     X_full = bands.reshape(len(FEATURE_COLS), -1).T
     valid_mask = ~np.isnan(X_full).any(axis=1)
+    # Water bodies and built-up areas are outside the food-insecurity domain.
+    water_or_builtup = np.isclose(lc.reshape(-1), _WATER_LAND_COVER) | np.isclose(
+        lc.reshape(-1), _BUILTUP_LAND_COVER
+    )
+    valid_mask &= ~water_or_builtup
 
     transform = vci_tci_ds["vci"].rio.transform()
     crs = vci_tci_ds["vci"].rio.crs or "EPSG:4326"

@@ -13,6 +13,8 @@ import xarray as xr
 from requests import HTTPError
 from xarray.core.types import InterpOptions
 
+from climate_change.core.landcover_mask import WATER_CLASS, exclusion_mask
+
 FEATURE_COLS: list[str] = [
     "elevation",
     "twi",
@@ -469,7 +471,11 @@ def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
         static_img = f_static.result()
         dynamic_img = f_dynamic.result()
 
-    return ee.Image.cat([static_img, dynamic_img]).select(FEATURE_COLS)
+    stack = ee.Image.cat([static_img, dynamic_img]).select(FEATURE_COLS)
+    # Exclude permanent water bodies (ESA WorldCover) — flood risk applies to
+    # land that can flood, not water that already is water year-round.
+    valid_land = exclusion_mask(aoi, [WATER_CLASS])
+    return stack.updateMask(valid_land)
 
 
 # Training data sampling
@@ -505,6 +511,10 @@ def sample_training_data(
         flood_label = f_label.result()
 
     feature_stack = ee.Image.cat([static_img, dynamic_img]).select(FEATURE_COLS)
+    # Exclude permanent water bodies (ESA WorldCover) — flood risk applies to
+    # land that can flood, not water that already is water year-round.
+    valid_land = exclusion_mask(aoi, [WATER_CLASS])
+    feature_stack = feature_stack.updateMask(valid_land)
     labeled = feature_stack.addBands(flood_label)
     records = _sample_labeled_pixels(
         labeled=labeled,
