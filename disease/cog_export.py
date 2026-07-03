@@ -11,9 +11,14 @@ from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
+from climate_change.core.landcover_mask import WATER_CLASS
+
 from .features import FEATURE_COLS, align_datasets
 
 _log = logging.getLogger(__name__)
+
+# fetch_landcover() normalises ESA WorldCover class codes to [0, 1] (code / 100)
+_WATER_LAND_COVER = WATER_CLASS / 100
 
 # Integer encoding for COG (0 = nodata)
 RISK_INT: dict[int, str] = {1: "Low Risk", 2: "Medium Risk", 3: "High Risk"}
@@ -71,6 +76,9 @@ def export_disease_cog(
     bands = np.stack([rain4w, temp, ndwi, elev, pop, ndvi, lc], axis=0)  # (7, H, W)
     X_full = bands.reshape(len(FEATURE_COLS), -1).T  # (n_pixels, 7)
     valid_mask = ~np.isnan(X_full).any(axis=1)
+    # Permanent water bodies are excluded from the disease-risk output.
+    water = np.isclose(lc.reshape(-1), _WATER_LAND_COVER)
+    valid_mask &= ~water
     X_valid = scaler.transform(X_full[valid_mask])
 
     # Inference

@@ -13,6 +13,8 @@ import xarray as xr
 from requests import HTTPError
 from xarray.core.types import InterpOptions
 
+from climate_change.core.landcover_mask import WATER_CLASS, exclusion_mask
+
 FEATURE_COLS: list[str] = [
     "rainfall_4w",  # CHIRPS 28-day cumulative rainfall (mm)
     "temp_mean",  # MODIS daytime LST (°C)
@@ -368,7 +370,11 @@ def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
         .reproject("EPSG:4326", None, scale)
     )
 
-    return ee.Image.cat([rain_4w, temp_mean, ndwi, elevation, pop_density, ndvi, land_cover])
+    stack = ee.Image.cat([rain_4w, temp_mean, ndwi, elevation, pop_density, ndvi, land_cover])
+    # Exclude permanent water bodies from feature preparation/sampling — disease
+    # risk is a property of inhabited/inhabitable land, not open water.
+    valid_land = exclusion_mask(aoi, [WATER_CLASS])
+    return stack.updateMask(valid_land)
 
 
 def _fetch_ndvi_monthly(aoi: ee.Geometry, start: str, end: str) -> pd.DataFrame:
