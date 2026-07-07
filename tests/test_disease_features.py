@@ -8,7 +8,7 @@ from climate_change.disease.features import (
     DISEASE_CLASSES,
     DISEASE_COLORS,
     FEATURE_COLS,
-    RISK_PERCENTILES,
+    RISK_SCORE_THRESHOLDS,
     SCORE_WEIGHTS,
     _normalise_date_window,
     sample_training_data,
@@ -92,12 +92,16 @@ class TestScoreWeights:
             assert k in SCORE_WEIGHTS
 
 
-class TestRiskPercentiles:
+class TestRiskScoreThresholds:
     def test_two_values(self):
-        assert len(RISK_PERCENTILES) == 2
+        assert len(RISK_SCORE_THRESHOLDS) == 2
 
     def test_ordered(self):
-        assert RISK_PERCENTILES[0] < RISK_PERCENTILES[1]
+        assert RISK_SCORE_THRESHOLDS[0] < RISK_SCORE_THRESHOLDS[1]
+
+    def test_within_score_range(self):
+        for t in RISK_SCORE_THRESHOLDS:
+            assert 0.0 < t < 100.0
 
 
 class TestNormaliseDateWindow:

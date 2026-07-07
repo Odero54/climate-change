@@ -39,8 +39,12 @@ SCORE_WEIGHTS: dict[str, float] = {
 # Long-term baseline end date (used for VCI/TCI min-max computation)
 LT_BASELINE_START = "2001-01-01"
 
-# Tercile thresholds for labelling
-RISK_PERCENTILES: tuple[float, float] = (1 / 3, 2 / 3)
+# Fixed absolute cutoffs on the 0-100 composite food-stress score. These are NOT
+# percentiles of the sampled pixels — using np.percentile on the sample's own
+# score distribution always yields ~33/33/33 splits by construction, regardless
+# of the area's actual stress level. An AOI where every pixel scores low must be
+# able to come out mostly Low Risk.
+RISK_SCORE_THRESHOLDS: tuple[float, float] = (33.0, 66.0)
 
 
 def fetch_vci_tci(
@@ -551,10 +555,10 @@ def sample_training_data(
 ) -> pd.DataFrame:
     """
     Sample n_pixels from the GEE feature stack and assign 3-class food insecurity labels.
-    Labels: tercile thresholds on the composite food stress score.
-      0 = Low Risk  (bottom 1/3)
-      1 = Medium Risk (middle 1/3)
-      2 = High Risk (top 1/3)
+    Labels: fixed absolute thresholds on the composite food stress score (0-100 scale).
+      0 = Low Risk    (score < 33)
+      1 = Medium Risk (33 <= score < 66)
+      2 = High Risk   (score >= 66)
     Returns DataFrame with FEATURE_COLS + ['food_score', 'label'].
     """
     samples = feature_stack.sample(
@@ -573,11 +577,9 @@ def sample_training_data(
     )
 
     scores = _compute_food_score(df)
-    t33 = float(np.percentile(scores, RISK_PERCENTILES[0] * 100))
-    t66 = float(np.percentile(scores, RISK_PERCENTILES[1] * 100))
     labels = np.zeros(len(df), dtype=np.intp)
-    labels[scores >= t33] = 1
-    labels[scores >= t66] = 2
+    labels[scores >= RISK_SCORE_THRESHOLDS[0]] = 1
+    labels[scores >= RISK_SCORE_THRESHOLDS[1]] = 2
 
     df["food_score"] = scores
     df["label"] = labels

@@ -4,7 +4,7 @@ from climate_change.food_security.features import (
     FEATURE_COLS,
     FOOD_CLASSES,
     FOOD_COLORS,
-    RISK_PERCENTILES,
+    RISK_SCORE_THRESHOLDS,
     SCORE_WEIGHTS,
 )
 
@@ -53,13 +53,13 @@ class TestScoreWeights:
             assert key in SCORE_WEIGHTS
 
 
-class TestRiskPercentiles:
+class TestRiskScoreThresholds:
     def test_two_thresholds(self):
-        assert len(RISK_PERCENTILES) == 2
+        assert len(RISK_SCORE_THRESHOLDS) == 2
 
     def test_lower_less_than_upper(self):
-        assert RISK_PERCENTILES[0] < RISK_PERCENTILES[1]
+        assert RISK_SCORE_THRESHOLDS[0] < RISK_SCORE_THRESHOLDS[1]
 
-    def test_both_between_0_and_1(self):
-        for p in RISK_PERCENTILES:
-            assert 0.0 < p < 1.0
+    def test_both_within_score_range(self):
+        for t in RISK_SCORE_THRESHOLDS:
+            assert 0.0 < t < 100.0

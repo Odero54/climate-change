@@ -37,8 +37,12 @@ SCORE_WEIGHTS: dict[str, float] = {
     "ndwi_score": 0.25,
 }
 
-# Tercile threshold for labelling (top 1/3 = High Risk)
-RISK_PERCENTILES: tuple[float, float] = (1 / 3, 2 / 3)
+# Fixed absolute cutoffs on the 0-100 composite risk score. These are NOT
+# percentiles of the sampled pixels — using np.percentile on the sample's own
+# score distribution always yields ~33/33/33 splits by construction, regardless
+# of the area's actual suitability. An AOI where every pixel scores low must be
+# able to come out mostly Low Risk.
+RISK_SCORE_THRESHOLDS: tuple[float, float] = (33.0, 66.0)
 
 
 def _normalise_date_window(start: str, end: str, minimum_days: int = 90) -> tuple[str, str]:
@@ -196,7 +200,9 @@ def fetch_pop_density(aoi: ee.Geometry, year: int = 2020, scale: int = 1000) -> 
     Returns Dataset with variable 'pop_density'.
     """
     pop_collection = (
-        ee.ImageCollection("WorldPop/GP/100m/pop").filterBounds(aoi).filter(ee.Filter.eq("year", year))
+        ee.ImageCollection("WorldPop/GP/100m/pop")
+        .filterBounds(aoi)
+        .filter(ee.Filter.eq("year", year))
     )
     pop_raw = _require_population_image(pop_collection, year).select("population").clip(aoi)
     pop_log = pop_raw.add(1).log().rename("pop_density")
@@ -342,7 +348,9 @@ def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
 
     # WorldPop log(1 + pop)
     pop_collection = (
-        ee.ImageCollection("WorldPop/GP/100m/pop").filterBounds(aoi).filter(ee.Filter.eq("year", 2020))
+        ee.ImageCollection("WorldPop/GP/100m/pop")
+        .filterBounds(aoi)
+        .filter(ee.Filter.eq("year", 2020))
     )
     pop_density = (
         _require_population_image(pop_collection, 2020)
@@ -522,10 +530,10 @@ def sample_training_data(
 ) -> pd.DataFrame:
     """
     Sample n_pixels from the GEE feature stack and assign 3-class disease risk labels.
-    Labels: tercile thresholds on the composite risk score.
-      0 = Low Risk  (bottom 1/3)
-      1 = Medium Risk (middle 1/3)
-      2 = High Risk (top 1/3)
+    Labels: fixed absolute thresholds on the composite risk score (0-100 scale).
+      0 = Low Risk    (score < 33)
+      1 = Medium Risk (33 <= score < 66)
+      2 = High Risk   (score >= 66)
     Returns DataFrame with FEATURE_COLS + ['lon', 'lat', 'risk_score', 'label'].
     """
     samples = feature_stack.sample(
@@ -564,10 +572,9 @@ def sample_training_data(
             "and date range. Try a different area or a shorter/different date range."
         )
 
-    df = (
-        raw_df.dropna(subset=FEATURE_COLS + ["lon", "lat"])[FEATURE_COLS + ["lon", "lat"]]
-        .reset_index(drop=True)
-    )
+    df = raw_df.dropna(subset=FEATURE_COLS + ["lon", "lat"])[
+        FEATURE_COLS + ["lon", "lat"]
+    ].reset_index(drop=True)
     if df.empty:
         raise ValueError(
             "All sampled pixels had incomplete feature data for this area and date "
@@ -575,11 +582,9 @@ def sample_training_data(
         )
 
     scores = _compute_risk_score(df)
-    t33 = float(np.percentile(scores, RISK_PERCENTILES[0] * 100))
-    t66 = float(np.percentile(scores, RISK_PERCENTILES[1] * 100))
     labels = np.zeros(len(df), dtype=np.intp)
-    labels[scores >= t33] = 1
-    labels[scores >= t66] = 2
+    labels[scores >= RISK_SCORE_THRESHOLDS[0]] = 1
+    labels[scores >= RISK_SCORE_THRESHOLDS[1]] = 2
 
     df["risk_score"] = scores
     df["label"] = labels

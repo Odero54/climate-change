@@ -38,8 +38,15 @@ SCORE_WEIGHTS: dict[str, float] = {
     "s_ndvi_cv": 0.08,
 }
 
-# Pixels scoring above this percentile are labelled Degraded
-DEGRADED_PERCENTILE: int = 70
+# Fixed absolute cutoff on the 0-100 composite degradation score. This is NOT a
+# percentile of the sampled pixels — using np.percentile on the sample's own
+# score distribution always labels exactly the top 30% "Degraded" by
+# construction, regardless of the area's actual condition. Each component in
+# _compute_deg_score is min-max scaled so that its own "midpoint of concern"
+# raw value maps to 50 (e.g. zero NDVI slope, 10-degree terrain slope); since
+# the weights sum to 1, a pixel scoring above 50 has, on balance, more
+# indicators past their midpoint-of-concern than not.
+DEGRADED_SCORE_THRESHOLD: float = 50.0
 
 
 def fetch_ndvi_stack(
@@ -407,7 +414,7 @@ def sample_training_data(
 ) -> pd.DataFrame:
     """
     Sample n_pixels from the GEE feature stack and assign binary degradation labels.
-    Labels: top DEGRADED_PERCENTILE % by composite score → 1 (Degraded),
+    Labels: composite score >= DEGRADED_SCORE_THRESHOLD → 1 (Degraded),
             remainder → 0 (Not Degraded).
     Returns DataFrame with FEATURE_COLS + ['deg_score', 'deg_class'].
     """
@@ -424,9 +431,8 @@ def sample_training_data(
     df = df[FEATURE_COLS].copy()
 
     scores = _compute_deg_score(df)
-    threshold = float(np.percentile(scores, DEGRADED_PERCENTILE))
     df["deg_score"] = scores
-    df["deg_class"] = (scores >= threshold).astype(int)
+    df["deg_class"] = (scores >= DEGRADED_SCORE_THRESHOLD).astype(int)
     return df
 
 
