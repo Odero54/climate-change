@@ -27,6 +27,10 @@ RISK_LABEL_BY_VALUE = {value: label for label, value in RISK_INT.items()}
 
 
 def flood_raster_distribution(path: str | Path) -> dict:
+    """
+    Read an already-exported flood-risk COG and tally pixel counts/percentages
+    per risk class (Very High/High/Medium/Low), skipping nodata (<= 0) pixels.
+    """
     with rasterio.open(path) as src:
         data = src.read(1)
 

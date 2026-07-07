@@ -99,6 +99,14 @@ _MODULE_CONTEXT: dict[str, str] = {
 
 
 def build_interpretation_prompt(output: AnalysisOutput) -> str:
+    """
+    Build the module-agnostic base LLM prompt: registry description, country/
+    period/model context, and a raw dump of `output.stats`, followed by a
+    fixed 4-section instruction (SUMMARY/KEY DRIVERS/RECOMMENDATIONS/CAVEATS).
+    Module-specific builders (e.g. `build_drought_prompt`) call this first and
+    append chart/stat detail particular to that module; `build_prompt()`
+    dispatches to the right one automatically.
+    """
     info = USE_CASE_REGISTRY[output.module]
     module_ctx = _MODULE_CONTEXT.get(output.module, "")
     stats_str = "\n".join(f"  {k}: {v}" for k, v in output.stats.items())

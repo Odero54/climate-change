@@ -1,0 +1,92 @@
+site_name: climate-change
+site_description: Climate Resilience and Adaptation Decision Support System — multi-hazard EO analysis (drought, flood, food security, disease, land degradation)
+site_url: https://odero54.github.io/climate-change/
+repo_url: https://github.com/Odero54/climate-change
+repo_name: Odero54/climate-change
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.sections
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Concepts: concepts.md
+  - End-to-end example: end-to-end-example.md
+  - API reference:
+      - Top-level API: api/top-level.md
+      - core: api/core.md
+      - registry: api/registry.md
+      - drought: api/drought.md
+      - flood: api/flood.md
+      - food_security: api/food_security.md
+      - disease: api/disease.md
+      - land_degradation: api/land_degradation.md
+      - reporting: api/reporting.md
+      - ai_interpreter: api/ai_interpreter.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            merge_init_into_class: true
+            separate_signature: true
+            show_signature_annotations: true
+            members_order: source
+            filters:
+              - "!^_"
+
+watch:
+  - docs
+  - __init__.py
+  - registry.py
+  - core
+  - drought
+  - flood
+  - food_security
+  - disease
+  - land_degradation
+  - reporting
+  - ai_interpreter

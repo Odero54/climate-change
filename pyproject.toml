@@ -59,7 +59,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/Odero54/climate-change"
 "Source Code" = "https://github.com/Odero54/climate-change"
-"Documentation" = "https://github.com/Odero54/climate-change#readme"
+"Documentation" = "https://odero54.github.io/climate-change/"
 "Bug Tracker" = "https://github.com/Odero54/climate-change/issues"
 
 [project.optional-dependencies]
@@ -92,6 +92,11 @@ all    = [
     "openai>=1.0",
     "reportlab>=4.0",
     "Pillow>=10.0",
+]
+docs   = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
 ]
 
 # The repo root IS the climate_change package (no climate_change/ subdirectory)

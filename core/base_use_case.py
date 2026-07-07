@@ -91,6 +91,13 @@ def _aoi_geometries(aoi_geojson: dict | None) -> list[dict]:
 
 @dataclass
 class AnalysisConfig:
+    """Input contract accepted by every `BaseUseCase.execute()`.
+
+    Built by `core.runner.run_analysis` from the arguments passed to the
+    top-level `run_analysis()` function; `extra_params` carries module- and
+    model-specific overrides (e.g. `model_type`, `scale`, `n_pixels`).
+    """
+
     module: str
     aoi_geojson: dict  # GeoJSON Polygon
     start_date: str  # ISO: YYYY-MM-DD
@@ -101,6 +108,14 @@ class AnalysisConfig:
 
 @dataclass
 class AnalysisOutput:
+    """Output contract returned by every domain use case.
+
+    Fields are intentionally module-agnostic dicts/paths so all five domain
+    modules (drought, flood, food_security, disease, land_degradation) can
+    share one result shape; treat `stats` and `charts` as module-specific
+    payloads (see each module's `model.py` `build_*_charts` for their shape).
+    """
+
     module: str
     geojson: dict  # GeoJSON FeatureCollection with risk/severity scores
     raster_path: str | dict[str, str] | None  # Local/exported COG GeoTIFF path(s)

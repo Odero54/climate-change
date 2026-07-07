@@ -61,6 +61,7 @@ class FloodRiskUseCase(BaseUseCase):
     # ── BaseUseCase abstract methods (called by execute() via core runner) ──
 
     def fetch_data(self, config: AnalysisConfig) -> dict:
+        """Authenticate GEE and parse the AOI geometry (see `_fetch_from_dict`)."""
         flat: dict = {
             "aoi_geojson": config.aoi_geojson,
             "start_date": config.start_date,
@@ -71,9 +72,11 @@ class FloodRiskUseCase(BaseUseCase):
         return self._fetch_from_dict(flat)
 
     def preprocess(self, raw_data: dict, config: AnalysisConfig) -> dict:
+        """Build the feature stack and sample flooded/dry pixels (see `_preprocess_raw`)."""
         return self._preprocess_raw(raw_data)
 
     def run_model(self, features: dict, config: AnalysisConfig) -> AnalysisOutput:
+        """Train models, export the risk COG, and package an `AnalysisOutput`."""
         model_type = config.extra_params.get("model_type", "ensemble")
         dict_config = {"model_type": model_type, **config.extra_params}
         result = self._run_model_dict(features, dict_config)

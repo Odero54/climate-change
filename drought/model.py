@@ -257,6 +257,11 @@ def run_kmeans_typology(ds, n_clusters: int = 4) -> dict:
 
 
 def drought_severity_stats(latest_cdi: np.ndarray) -> dict:
+    """
+    Summarise the most recent CDI raster into a mean value and the percentage
+    of valid pixels falling in each of the 8 standard drought/wet severity
+    bands (see `_classify_cdi_value` in `cdi_runner.py` for the same cutoffs).
+    """
     valid = latest_cdi[np.isfinite(latest_cdi)]
     if valid.size == 0:
         return {

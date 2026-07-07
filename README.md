@@ -3,6 +3,10 @@
 [![PyPI version](https://img.shields.io/pypi/v/climate-change?label=pypi)](https://pypi.org/project/climate-change/)
 [![Python versions](https://img.shields.io/pypi/pyversions/climate-change?label=python)](https://pypi.org/project/climate-change/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](#license)
+[![Docs](https://img.shields.io/badge/docs-odero54.github.io-teal)](https://odero54.github.io/climate-change/)
+
+Full documentation (setup, concepts, API reference, end-to-end example):
+**<https://odero54.github.io/climate-change/>**
 
 `climate-change` is the core Python package for the ARIN Climate Resilience
 Decision Support System. It combines Earth observation data, geospatial

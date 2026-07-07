@@ -34,6 +34,17 @@ def predict_food_security_grid(
     model_type: str = "rf",
     aoi_geojson: dict | None = None,
 ) -> dict:
+    """
+    Run full-grid inference over the aligned feature datasets and classify
+    every valid pixel into Low/Medium/High food-insecurity risk.
+
+    Returns a dict with the classified `risk_grid` (int-encoded per
+    `RISK_INT`, 0 = nodata), the raster `transform`/`crs`/shape, and
+    per-class pixel counts/percentages.
+    Water bodies and built-up land cover are masked out before classification.
+    Used both by `export_food_security_cog` (COG write) and the use case's
+    GeoJSON conversion.
+    """
     aligned = align_datasets(datasets, ref_key="vci_tci")
     vci_tci_ds = aligned["vci_tci"]
     ref_lat = vci_tci_ds.lat

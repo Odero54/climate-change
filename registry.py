@@ -5,6 +5,11 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ModelOption:
+    """One selectable model for a use case, as shown to a frontend user.
+
+    `id` is the value accepted by `extra_params["model_type"]` in `run_analysis`.
+    """
+
     id: str
     label: str
     recommended: bool
@@ -13,6 +18,14 @@ class ModelOption:
 
 @dataclass(frozen=True)
 class UseCaseInfo:
+    """Display and configuration metadata for one domain module (e.g. "disease").
+
+    Drives frontend UI copy (name, icon, description), the AI interpreter's
+    prompt context (climate_importance, dependent/independent variables), and
+    the model picker (model_options, default_model). Populated once per module
+    in `USE_CASE_REGISTRY` and looked up via `get_use_case_info`.
+    """
+
     id: str
     name: str
     icon: str
@@ -258,6 +271,10 @@ USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
 
 
 def get_use_case_info(module_id: str) -> UseCaseInfo:
+    """Look up registry metadata for a module id (e.g. "flood", "disease").
+
+    Raises `KeyError` listing the valid ids if `module_id` is not registered.
+    """
     if module_id not in USE_CASE_REGISTRY:
         raise KeyError(f"Unknown module: '{module_id}'. Available: {sorted(USE_CASE_REGISTRY)}")
     return USE_CASE_REGISTRY[module_id]
