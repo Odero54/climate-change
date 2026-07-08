@@ -9,7 +9,7 @@ import xarray as xr
 from rasterio.features import geometry_mask
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
-from xgboost import XGBClassifier
+from xgboost import Booster, DMatrix
 
 from climate_change.core.landcover_mask import WATER_CLASS
 
@@ -26,7 +26,7 @@ RISK_INT: dict[int, str] = {1: "Low Risk", 2: "Medium Risk", 3: "High Risk"}
 
 def export_disease_cog(
     gbm_model: GradientBoostingClassifier,
-    xgb_model: XGBClassifier,
+    xgb_model: Booster,
     scaler: StandardScaler,
     datasets: dict[str, xr.Dataset],
     output_dir: str,
@@ -42,7 +42,7 @@ def export_disease_cog(
     Parameters
     ----------
     gbm_model   : trained GradientBoostingClassifier
-    xgb_model   : trained XGBClassifier
+    xgb_model   : trained XGBoost Booster
     scaler      : fitted StandardScaler (from DiseaseModel.scaler)
     datasets    : dict returned by build_feature_datasets
     output_dir  : local directory for COG output
@@ -85,9 +85,9 @@ def export_disease_cog(
     if model_type == "gbm":
         proba = gbm_model.predict_proba(X_valid)
     elif model_type == "xgboost":
-        proba = xgb_model.predict_proba(X_valid)
+        proba = xgb_model.predict(DMatrix(X_valid))
     else:  # ensemble
-        proba = (gbm_model.predict_proba(X_valid) + xgb_model.predict_proba(X_valid)) / 2.0
+        proba = (gbm_model.predict_proba(X_valid) + xgb_model.predict(DMatrix(X_valid))) / 2.0
 
     pred_classes = np.argmax(proba, axis=1).astype(np.uint8) + 1  # 1-indexed
 
