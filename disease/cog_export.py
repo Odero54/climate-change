@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
 import rasterio
@@ -17,6 +18,12 @@ from .features import FEATURE_COLS, align_datasets
 from .model import pad_gbm_proba
 
 _log = logging.getLogger(__name__)
+
+
+class DiseaseCogResult(TypedDict):
+    disease_risk: str
+    risk_pct: list[float]
+
 
 # fetch_landcover() normalises ESA WorldCover class codes to [0, 1] (code / 100)
 _WATER_LAND_COVER = WATER_CLASS / 100
@@ -34,7 +41,7 @@ def export_disease_cog(
     prefix: str,
     model_type: str = "gbm",
     aoi_geojson: dict | None = None,
-) -> dict[str, str]:
+) -> DiseaseCogResult:
     """
     Build the full-AOI feature matrix from in-memory xarray Datasets,
     run inference with the selected model, classify into 3 risk classes,
@@ -52,7 +59,14 @@ def export_disease_cog(
 
     Returns
     -------
-    dict with key 'disease_risk' → path string
+    dict with keys:
+      'disease_risk' → path string
+      'risk_pct'     → [low_pct, medium_pct, high_pct] over the AOI's valid
+                       (non-nodata) pixels, matching DISEASE_CLASSES order.
+                       This reflects every pixel actually painted on the map,
+                       unlike the training-sample-based stats DiseaseModel.predict()
+                       computes, which only covers the few hundred sampled points
+                       and can diverge sharply from the full-AOI distribution.
     """
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -127,4 +141,9 @@ def export_disease_cog(
         )
 
     _log.info("COG exported: %s  (%d×%d px)", cog_path, n_lat, n_lon)
-    return {"disease_risk": str(cog_path)}
+
+    class_counts = np.array([(risk_grid == v).sum() for v in (1, 2, 3)], dtype=np.float64)
+    n_valid = class_counts.sum()
+    risk_pct = (class_counts / n_valid * 100).round(1).tolist() if n_valid > 0 else [0.0, 0.0, 0.0]
+
+    return {"disease_risk": str(cog_path), "risk_pct": risk_pct}

@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from xgboost.sklearn import XGBClassifier
+from xgboost import Booster, DMatrix
 
 from climate_change.flood.features import FEATURE_COLS
 from climate_change.flood.model import (
@@ -15,6 +15,7 @@ from climate_change.flood.model import (
     compute_uncertainty,
     evaluate_models,
     find_best_threshold,
+    positive_class_proba,
     train_rf,
     train_xgb,
 )
@@ -88,7 +89,25 @@ class TestTrainXgb:
     def test_returns_xgb_and_metadata(self, tiny_binary_xy):
         X, y = tiny_binary_xy
         xgb, meta = train_xgb(X[:40], y[:40], X[40:], y[40:], cv_folds=2)
-        assert isinstance(xgb, XGBClassifier)
+        assert isinstance(xgb, Booster)
+        assert "cv_f1_mean" in meta
+
+    def test_handles_single_class_training_data(self):
+        """Regression test: an AOI/time window where every sampled pixel is
+        flooded (or none are) must train successfully instead of raising the
+        XGBClassifier 'Invalid classes inferred from unique values of `y`'
+        error, which fires whenever y's lone class isn't 0."""
+        rng = np.random.default_rng(2)
+        X_train = rng.standard_normal((30, 10))
+        y_train = np.ones(30, dtype=int)  # every sampled pixel flooded
+        X_val = rng.standard_normal((10, 10))
+        y_val = np.ones(10, dtype=int)
+
+        xgb, meta = train_xgb(X_train, y_train, X_val, y_val, cv_folds=2)
+
+        assert isinstance(xgb, Booster)
+        prob = xgb.predict(DMatrix(X_train))
+        assert prob.shape == (30,)
         assert "cv_f1_mean" in meta
 
 
@@ -122,6 +141,39 @@ class TestEvaluateModels:
         result = evaluate_models(rf, xgb, X_te, y_te)
         for key in ("rf", "xgb", "ensemble"):
             assert 0.0 <= result[key]["f1"] <= 1.0
+
+
+class TestPositiveClassProba:
+    def test_two_columns_returns_second_column(self):
+        proba = np.array([[0.3, 0.7], [0.9, 0.1]])
+
+        class _FakeClf:
+            classes_ = np.array([0, 1])
+
+        result = positive_class_proba(_FakeClf(), proba)
+        assert list(result) == [0.7, 0.1]
+
+    def test_single_column_class_one_returns_that_column(self):
+        """When every training sample was flooded, predict_proba has a single
+        column for class 1 — that column already is P(y=1)."""
+        proba = np.array([[1.0], [1.0]])
+
+        class _FakeClf:
+            classes_ = np.array([1])
+
+        result = positive_class_proba(_FakeClf(), proba)
+        assert list(result) == [1.0, 1.0]
+
+    def test_single_column_class_zero_returns_zeros(self):
+        """When every training sample was dry, predict_proba has a single
+        column for class 0 — P(y=1) is 0 everywhere."""
+        proba = np.array([[1.0], [1.0]])
+
+        class _FakeClf:
+            classes_ = np.array([0])
+
+        result = positive_class_proba(_FakeClf(), proba)
+        assert list(result) == [0.0, 0.0]
 
 
 # ── compute_uncertainty ───────────────────────────────────────────────────────
