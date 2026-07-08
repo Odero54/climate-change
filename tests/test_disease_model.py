@@ -93,6 +93,25 @@ class TestEvaluateModels:
         result = evaluate_models(gbm, xgb, X_te, y_te)
         assert len(result["actuals"]) == len(y_te)
 
+    def test_ensemble_handles_missing_class_in_training_data(self):
+        """Regression test: when an AOI's data is missing one risk class, GBM's
+        predict_proba only has columns for the classes it saw while train_xgb's
+        Booster always outputs 3 columns (num_class is fixed). Combining them
+        for the ensemble must not raise a broadcast shape mismatch."""
+        rng = np.random.default_rng(3)
+        X_train = rng.standard_normal((40, 7))
+        y_train = np.repeat([1, 2], 20)  # class 0 ("Low Risk") entirely absent
+        X_test = rng.standard_normal((10, 7))
+        y_test = np.array([1, 2] * 5)
+
+        gbm, _ = train_gbm(X_train, y_train, cv_folds=2)
+        xgb, _ = train_xgb(X_train, y_train, cv_folds=2)
+
+        result = evaluate_models(gbm, xgb, X_test, y_test)
+
+        assert len(result["ensemble"]["predictions"]) == 10
+        assert set(result["ensemble"]["predictions"]).issubset({0, 1, 2})
+
 
 class TestDetectHotspots:
     def test_no_lon_lat_returns_empty(self):
