@@ -9,12 +9,13 @@ import xarray as xr
 from rasterio.features import geometry_mask
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from xgboost import XGBClassifier
+from xgboost import Booster, DMatrix
 
 from climate_change.core.base_use_case import _aoi_geometries
 from climate_change.core.landcover_mask import BUILTUP_CLASS, WATER_CLASS
 
 from .features import FEATURE_COLS, align_datasets
+from .model import pad_rf_proba
 
 # fetch_landcover() normalises ESA WorldCover class codes to [0, 1] (code / 100)
 _WATER_LAND_COVER = WATER_CLASS / 100
@@ -28,7 +29,7 @@ RISK_INT: dict[int, str] = {1: "Low Risk", 2: "Medium Risk", 3: "High Risk"}
 
 def predict_food_security_grid(
     rf_model: RandomForestClassifier,
-    xgb_model: XGBClassifier,
+    xgb_model: Booster,
     scaler: StandardScaler,
     datasets: dict[str, xr.Dataset],
     model_type: str = "rf",
@@ -86,9 +87,10 @@ def predict_food_security_grid(
         if model_type == "rf":
             proba = rf_model.predict_proba(X_valid)
         elif model_type == "xgboost":
-            proba = xgb_model.predict_proba(X_valid)
+            proba = xgb_model.predict(DMatrix(X_valid))
         else:
-            proba = (rf_model.predict_proba(X_valid) + xgb_model.predict_proba(X_valid)) / 2.0
+            proba_rf = pad_rf_proba(rf_model, rf_model.predict_proba(X_valid))
+            proba = (proba_rf + xgb_model.predict(DMatrix(X_valid))) / 2.0
         pred_classes = np.argmax(proba, axis=1).astype(np.uint8) + 1
         risk_grid[valid_mask] = pred_classes
 
@@ -115,7 +117,7 @@ def predict_food_security_grid(
 
 def export_food_security_cog(
     rf_model: RandomForestClassifier,
-    xgb_model: XGBClassifier,
+    xgb_model: Booster,
     scaler: StandardScaler,
     datasets: dict[str, xr.Dataset],
     output_dir: str,
@@ -131,7 +133,7 @@ def export_food_security_cog(
     Parameters
     ----------
     rf_model    : trained RandomForestClassifier
-    xgb_model   : trained XGBClassifier
+    xgb_model   : trained XGBoost Booster
     scaler      : fitted StandardScaler (from FoodSecurityModel.scaler)
     datasets    : dict returned by build_feature_datasets
     output_dir  : local directory for COG output

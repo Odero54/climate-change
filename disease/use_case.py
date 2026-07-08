@@ -30,6 +30,23 @@ from .features import (
 from .model import DiseaseModel
 
 
+def _apply_raster_risk_pct(result: dict, risk_pct: list[float]) -> None:
+    """
+    Overwrite the sampled-training-set risk distribution with percentages
+    computed from the full-AOI raster (every pixel actually painted on the
+    map). DiseaseModel.predict() only has a few hundred sampled points to
+    work with, whose class mix can diverge sharply from the full continuous
+    raster, which is what the frontend's "Risk Classification" legend should
+    describe.
+
+    risk_pct is [low_pct, medium_pct, high_pct], matching DISEASE_CLASSES order.
+    """
+    result["stats"]["high_risk_pct"] = risk_pct[2]
+    risk_dist = result.get("charts", {}).get("riskDist")
+    if risk_dist is not None:
+        risk_dist["data"] = risk_pct
+
+
 class DiseaseRiskUseCase(BaseUseCase):
     """
     Entry point for the climate-driven disease surveillance domain.
@@ -78,7 +95,7 @@ class DiseaseRiskUseCase(BaseUseCase):
         raster_paths: dict[str, str] | None = None
         raster_error: str | None = None
         try:
-            raster_paths = export_disease_cog(
+            raster_result = export_disease_cog(
                 gbm_model=features["_gbm"],
                 xgb_model=features["_xgb"],
                 scaler=features["_scaler"],
@@ -88,6 +105,8 @@ class DiseaseRiskUseCase(BaseUseCase):
                 model_type=model_type,
                 aoi_geojson=config.aoi_geojson,
             )
+            raster_paths = {"disease_risk": raster_result["disease_risk"]}
+            _apply_raster_risk_pct(result, raster_result["risk_pct"])
         except Exception as exc:
             raster_error = str(exc)
 
@@ -203,7 +222,7 @@ class DiseaseRiskUseCase(BaseUseCase):
         cog_paths: dict[str, str] | None = None
         cog_error: str | None = None
         try:
-            cog_paths = export_disease_cog(
+            raster_result = export_disease_cog(
                 gbm_model=features["_gbm"],
                 xgb_model=features["_xgb"],
                 scaler=features["_scaler"],
@@ -213,6 +232,8 @@ class DiseaseRiskUseCase(BaseUseCase):
                 model_type=config.get("model_type", "gbm"),
                 aoi_geojson=config.get("aoi_geojson"),
             )
+            cog_paths = {"disease_risk": raster_result["disease_risk"]}
+            _apply_raster_risk_pct(result, raster_result["risk_pct"])
         except Exception as exc:
             _log.warning("Disease COG export failed: %s", exc, exc_info=True)
             cog_error = str(exc)

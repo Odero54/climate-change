@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from sklearn.model_selection import train_test_split
+from xgboost import Booster, DMatrix
 
 from climate_change.food_security.features import FEATURE_COLS, FOOD_CLASSES
 from climate_change.food_security.model import (
@@ -42,13 +43,29 @@ class TestTrainXgb:
     def test_returns_model_and_metadata(self, tiny_multiclass_xy):
         X, y = tiny_multiclass_xy
         xgb, meta = train_xgb(X[:60], y[:60], cv_folds=2)
+        assert isinstance(xgb, Booster)
         assert "cv_f1_mean" in meta
 
     def test_model_predicts_valid_classes(self, tiny_multiclass_xy):
         X, y = tiny_multiclass_xy
         xgb, _ = train_xgb(X[:60], y[:60], cv_folds=2)
-        preds = xgb.predict(X[60:])
+        preds = np.argmax(xgb.predict(DMatrix(X[60:])), axis=1)
         assert set(preds).issubset({0, 1, 2})
+
+    def test_handles_missing_class_in_training_data(self):
+        """Regression test: an AOI/time window with zero samples of one risk
+        class must train successfully instead of raising the XGBClassifier
+        'Invalid classes inferred from unique values of `y`' error."""
+        rng = np.random.default_rng(1)
+        X = rng.standard_normal((40, 7))
+        y = np.repeat([1, 2], 20)  # class 0 ("Low Risk") entirely absent
+
+        xgb, meta = train_xgb(X, y, cv_folds=2)
+
+        assert isinstance(xgb, Booster)
+        proba = xgb.predict(DMatrix(X))
+        assert proba.shape == (40, 3)
+        assert set(np.argmax(proba, axis=1)).issubset({0, 1, 2})
 
 
 class TestEvaluateModels:
@@ -71,6 +88,25 @@ class TestEvaluateModels:
         result = evaluate_models(rf, xgb, X_te, y_te)
         for key in ("rf", "xgb", "ensemble"):
             assert 0.0 <= result[key]["accuracy"] <= 1.0
+
+    def test_ensemble_handles_missing_class_in_training_data(self):
+        """Regression test: when an AOI's data is missing one risk class, RF's
+        predict_proba only has columns for the classes it saw while train_xgb's
+        Booster always outputs 3 columns (num_class is fixed). Combining them
+        for the ensemble must not raise a broadcast shape mismatch."""
+        rng = np.random.default_rng(3)
+        X_train = rng.standard_normal((40, 7))
+        y_train = np.repeat([1, 2], 20)  # class 0 ("Low Risk") entirely absent
+        X_test = rng.standard_normal((10, 7))
+        y_test = np.array([1, 2] * 5)
+
+        rf, _ = train_rf(X_train, y_train, cv_folds=2)
+        xgb, _ = train_xgb(X_train, y_train, cv_folds=2)
+
+        result = evaluate_models(rf, xgb, X_test, y_test)
+
+        assert len(result["ensemble"]["predictions"]) == 10
+        assert set(result["ensemble"]["predictions"]).issubset({0, 1, 2})
 
 
 class TestBuildFoodSecurityCharts:

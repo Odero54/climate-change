@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypedDict
 
 import lightgbm as lgb
 import numpy as np
@@ -15,6 +16,12 @@ from climate_change.core.landcover_mask import WATER_CLASS
 from .features import FEATURE_COLS, align_datasets
 
 
+class DegradationCogResult(TypedDict):
+    degradation_risk: str
+    risk_pct: list[float]
+    risk_ha: list[float]
+
+
 def export_degradation_cog(
     rf_model: RandomForestClassifier,
     lgbm_model: lgb.LGBMClassifier,
@@ -24,7 +31,8 @@ def export_degradation_cog(
     prefix: str = "land_degradation",
     model_type: str = "lgbm",
     aoi_geojson: dict | None = None,
-) -> dict[str, str]:
+    scale: int = 1000,
+) -> DegradationCogResult:
     """
     Apply the trained model to the full pixel grid and write a Cloud-Optimised GeoTIFF.
 
@@ -33,7 +41,15 @@ def export_degradation_cog(
       1  = Degraded
       -1 = NoData (pixels with missing feature values)
 
-    Returns dict: {"degradation_risk": "<path>"}
+    Returns dict with keys:
+      'degradation_risk' → path string
+      'risk_pct'         → [not_degraded_pct, degraded_pct] over the AOI's valid
+                           (non-nodata) pixels, matching DEGRADATION_CLASSES order.
+      'risk_ha'          → same two classes in hectares (pixel area = scale²/10_000)
+    This reflects every pixel actually painted on the map, unlike the
+    training-sample-based stats LandDegradationModel.predict() computes, which
+    only covers the held-out test split and can diverge sharply from the
+    full-AOI distribution.
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -97,4 +113,16 @@ def export_degradation_cog(
     cog_path = out / f"{prefix}_degradation_risk.tif"
     da.rio.to_raster(str(cog_path), driver="COG", compress="LZW")
 
-    return {"degradation_risk": str(cog_path)}
+    valid_pred = prediction_2d[prediction_2d >= 0]
+    n_valid = int(valid_pred.size)
+    not_deg_count = int((valid_pred == 0).sum())
+    deg_count = int((valid_pred == 1).sum())
+    risk_pct = (
+        [round(not_deg_count / n_valid * 100, 1), round(deg_count / n_valid * 100, 1)]
+        if n_valid
+        else [0.0, 0.0]
+    )
+    pixel_ha = (scale**2) / 10_000
+    risk_ha = [round(not_deg_count * pixel_ha, 1), round(deg_count * pixel_ha, 1)]
+
+    return {"degradation_risk": str(cog_path), "risk_pct": risk_pct, "risk_ha": risk_ha}

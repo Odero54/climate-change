@@ -8,7 +8,7 @@ import rasterio
 import xarray as xr
 from rasterio.features import geometry_mask
 from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
+from xgboost import Booster, DMatrix
 
 from climate_change.core.base_use_case import _aoi_geometries
 from climate_change.core.landcover_mask import WATER_CLASS
@@ -17,7 +17,7 @@ from .features import FEATURE_COLS, RISK_INT, align_datasets
 
 # _build_static_image() normalises ESA WorldCover class codes via (code / 10) - 1
 _WATER_LANDCOVER = (WATER_CLASS / 10.0) - 1.0
-from .model import VALID_MODEL_TYPES, classify_flood_risk
+from .model import VALID_MODEL_TYPES, classify_flood_risk, positive_class_proba
 
 _log = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def flood_raster_distribution(path: str | Path) -> dict:
 
 def export_flood_cog(
     rf_model: RandomForestClassifier,
-    xgb_model: XGBClassifier,
+    xgb_model: Booster,
     datasets: dict[str, xr.Dataset],
     output_dir: str,
     prefix: str,
@@ -131,8 +131,8 @@ def export_flood_cog(
     # Inference — route by model_type
     risk_grid: np.ndarray = np.zeros(n_lat * n_lon, dtype=np.uint8)
     if X_valid.size:
-        prob_rf = rf_model.predict_proba(X_valid)[:, 1]
-        prob_xgb = xgb_model.predict_proba(X_valid)[:, 1]
+        prob_rf = positive_class_proba(rf_model, rf_model.predict_proba(X_valid))
+        prob_xgb = xgb_model.predict(DMatrix(X_valid))
         if model_type == "rf":
             selected_prob = prob_rf
         elif model_type == "xgboost":

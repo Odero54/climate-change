@@ -10,8 +10,9 @@ from sklearn.metrics import (
     precision_recall_curve,
     roc_auc_score,
 )
-from sklearn.model_selection import cross_val_score, train_test_split
-from xgboost.sklearn import XGBClassifier
+from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
+from xgboost import Booster, DMatrix
+from xgboost import train as xgb_train
 
 from .features import FEATURE_COLS
 
@@ -25,6 +26,17 @@ XGB_MAX_DEPTH = 6
 XGB_LR = 0.05
 XGB_SUBSAMPLE = 0.8
 XGB_COLSAMPLE = 0.8
+
+XGB_PARAMS = {
+    "objective": "binary:logistic",
+    "learning_rate": XGB_LR,
+    "max_depth": XGB_MAX_DEPTH,
+    "subsample": XGB_SUBSAMPLE,
+    "colsample_bytree": XGB_COLSAMPLE,
+    "eval_metric": "logloss",
+    "seed": 42,
+    "verbosity": 0,
+}
 
 VALID_MODEL_TYPES = ("rf", "xgboost", "ensemble")
 
@@ -71,23 +83,60 @@ def train_xgb(
     X_val: np.ndarray,
     y_val: np.ndarray,
     cv_folds: int = 5,
-) -> tuple[XGBClassifier, dict]:
-    """Fit XGBoost with scale_pos_weight and eval-set logging. Returns (model, metadata)."""
+) -> tuple[Booster, dict]:
+    """
+    Fit XGBoost binary flood classifier via the low-level Booster API with
+    scale_pos_weight and eval-set logging. Returns (model, metadata).
+
+    Uses xgboost.train() rather than the XGBClassifier sklearn wrapper because
+    the wrapper's fit() rejects a y whose sorted unique values aren't exactly
+    [0, 1] — an AOI/time window where every sampled pixel is flooded (or none
+    are) is a legitimate data state, not invalid input, and would otherwise
+    crash training.
+    """
     scale_pos_weight = float((y_train == 0).sum() / max((y_train == 1).sum(), 1))
-    xgb = XGBClassifier(
-        n_estimators=XGB_N_ESTIMATORS,
-        max_depth=XGB_MAX_DEPTH,
-        learning_rate=XGB_LR,
-        subsample=XGB_SUBSAMPLE,
-        colsample_bytree=XGB_COLSAMPLE,
-        scale_pos_weight=scale_pos_weight,
-        eval_metric="logloss",
-        random_state=42,
-        verbosity=0,
+    params = {**XGB_PARAMS, "scale_pos_weight": scale_pos_weight}
+    dtrain = DMatrix(X_train, label=y_train)
+    dval = DMatrix(X_val, label=y_val)
+    booster = xgb_train(
+        params,
+        dtrain,
+        num_boost_round=XGB_N_ESTIMATORS,
+        evals=[(dval, "validation")],
+        verbose_eval=False,
     )
-    xgb.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
-    cv_f1 = cross_val_score(xgb, X_train, y_train, cv=cv_folds, scoring="f1")
-    return xgb, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
+
+    cv = StratifiedKFold(n_splits=cv_folds)
+    cv_f1_scores = []
+    for train_idx, val_idx in cv.split(X_train, y_train):
+        fold_scale_pos_weight = float(
+            (y_train[train_idx] == 0).sum() / max((y_train[train_idx] == 1).sum(), 1)
+        )
+        fold_booster = xgb_train(
+            {**XGB_PARAMS, "scale_pos_weight": fold_scale_pos_weight},
+            DMatrix(X_train[train_idx], label=y_train[train_idx]),
+            num_boost_round=XGB_N_ESTIMATORS,
+        )
+        fold_pred = (fold_booster.predict(DMatrix(X_train[val_idx])) >= 0.5).astype(int)
+        cv_f1_scores.append(f1_score(y_train[val_idx], fold_pred))
+
+    cv_f1 = np.array(cv_f1_scores)
+    return booster, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
+
+
+def positive_class_proba(clf: RandomForestClassifier, proba: np.ndarray) -> np.ndarray:
+    """
+    Return P(y=1) from a binary sklearn classifier's predict_proba output.
+
+    predict_proba only has one column when the classifier saw a single class
+    during training (e.g. every sampled pixel in this AOI/time window was
+    flooded, or none were) — proba[:, 1] would then raise IndexError. Falls
+    back to reading clf.classes_ to know whether that lone column represents
+    class 0 or class 1.
+    """
+    if proba.shape[1] == 2:
+        return proba[:, 1]
+    return proba[:, 0] if clf.classes_[0] == 1 else np.zeros(proba.shape[0])
 
 
 # Threshold tuning
@@ -102,7 +151,7 @@ def find_best_threshold(probs: np.ndarray, y_true: np.ndarray) -> tuple[float, f
 # Evaluation
 def evaluate_models(
     rf: RandomForestClassifier,
-    xgb: XGBClassifier,
+    xgb: Booster,
     X_test: np.ndarray,
     y_test: np.ndarray,
 ) -> dict:
@@ -110,8 +159,8 @@ def evaluate_models(
     Evaluate RF, XGBoost, and their ensemble on the held-out test set.
     Thresholds are maximised per-model via the precision-recall curve.
     """
-    rf_prob = rf.predict_proba(X_test)[:, 1]
-    xgb_prob = xgb.predict_proba(X_test)[:, 1]
+    rf_prob = positive_class_proba(rf, rf.predict_proba(X_test))
+    xgb_prob = xgb.predict(DMatrix(X_test))
     ens_prob = (rf_prob + xgb_prob) / 2.0
 
     def _metrics(prob: np.ndarray, label: str) -> dict:
@@ -135,7 +184,7 @@ def evaluate_models(
 
 
 # SHAP
-def compute_shap_importance(xgb: XGBClassifier, X_test: np.ndarray) -> dict:
+def compute_shap_importance(xgb: Booster, X_test: np.ndarray) -> dict:
     """
     TreeExplainer SHAP values for XGBoost, sorted by descending mean |SHAP|.
     XGBoost is always used for SHAP regardless of model_type — it provides
@@ -250,7 +299,7 @@ class FloodModel:
 
     def __init__(self) -> None:
         self.rf: RandomForestClassifier | None = None
-        self.xgb: XGBClassifier | None = None
+        self.xgb: Booster | None = None
 
     def predict(self, df: pd.DataFrame, config: dict | None = None) -> dict:
         """

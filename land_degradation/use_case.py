@@ -29,6 +29,22 @@ from .features import (
 from .model import LandDegradationModel
 
 
+def _apply_raster_risk_pct(result: dict, risk_pct: list[float], risk_ha: list[float]) -> None:
+    """
+    Overwrite the test-split-based risk distribution with percentages/hectares
+    computed from the full-AOI raster (every pixel actually painted on the
+    map). LandDegradationModel.predict() only evaluates on the 20% held-out
+    test split, whose class mix can diverge sharply from the full continuous
+    raster, which is what the frontend's degradation chart should describe.
+
+    risk_pct/risk_ha are [not_degraded, degraded], matching DEGRADATION_CLASSES order.
+    """
+    risk_dist = result.get("charts", {}).get("riskDist")
+    if risk_dist is not None:
+        risk_dist["data"] = risk_pct
+        risk_dist["data_ha"] = risk_ha
+
+
 class LandDegradationUseCase(BaseUseCase):
     """
     Entry point for the land degradation domain.
@@ -77,7 +93,7 @@ class LandDegradationUseCase(BaseUseCase):
         raster_paths: dict[str, str] | None = None
         raster_error: str | None = None
         try:
-            raster_paths = export_degradation_cog(
+            raster_result = export_degradation_cog(
                 rf_model=features["_rf"],
                 lgbm_model=features["_lgbm"],
                 scaler=features["_scaler"],
@@ -86,7 +102,10 @@ class LandDegradationUseCase(BaseUseCase):
                 prefix=dict_config.get("prefix", "land_degradation"),
                 model_type=model_type,
                 aoi_geojson=config.aoi_geojson,
+                scale=int(dict_config.get("scale", 1000)),
             )
+            raster_paths = {"degradation_risk": raster_result["degradation_risk"]}
+            _apply_raster_risk_pct(result, raster_result["risk_pct"], raster_result["risk_ha"])
         except Exception as exc:
             raster_error = str(exc)
 
@@ -200,7 +219,7 @@ class LandDegradationUseCase(BaseUseCase):
         cog_paths: dict[str, str] | None = None
         cog_error: str | None = None
         try:
-            cog_paths = export_degradation_cog(
+            raster_result = export_degradation_cog(
                 rf_model=features["_rf"],
                 lgbm_model=features["_lgbm"],
                 scaler=features["_scaler"],
@@ -209,7 +228,10 @@ class LandDegradationUseCase(BaseUseCase):
                 prefix=config.get("prefix", "land_degradation"),
                 model_type=config.get("model_type", "lgbm"),
                 aoi_geojson=config.get("aoi_geojson"),
+                scale=int(config.get("scale", 1000)),
             )
+            cog_paths = {"degradation_risk": raster_result["degradation_risk"]}
+            _apply_raster_risk_pct(result, raster_result["risk_pct"], raster_result["risk_ha"])
         except Exception as exc:
             _log.warning("Land degradation COG export failed: %s", exc, exc_info=True)
             cog_error = str(exc)

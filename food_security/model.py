@@ -9,7 +9,8 @@ from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_sample_weight
-from xgboost import XGBClassifier
+from xgboost import Booster, DMatrix
+from xgboost import train as xgb_train
 
 from .features import FEATURE_COLS, FOOD_CLASSES, FOOD_COLORS
 
@@ -48,42 +49,85 @@ def train_rf(
     return clf, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
 
 
+XGB_PARAMS = {
+    "objective": "multi:softprob",
+    "num_class": len(FOOD_CLASSES),
+    "learning_rate": XGB_LR,
+    "max_depth": XGB_MAX_DEPTH,
+    "subsample": XGB_SUBSAMPLE,
+    "colsample_bytree": XGB_COLSAMPLE,
+    "eval_metric": "mlogloss",
+    "seed": 42,
+    "verbosity": 0,
+}
+
+
 def train_xgb(
     X_train: np.ndarray,
     y_train: np.ndarray,
     cv_folds: int = 5,
-) -> tuple[XGBClassifier, dict]:
-    """Fit XGBoost multi-class classifier with sample weights. Returns (model, metadata)."""
+) -> tuple[Booster, dict]:
+    """
+    Fit XGBoost multi-class classifier via the low-level Booster API with sample weights.
+
+    Uses xgboost.train() rather than the XGBClassifier sklearn wrapper because the
+    wrapper requires every class in FOOD_CLASSES to appear in y_train (it infers
+    num_class from np.unique(y_train) and rejects gaps). Some AOIs/time windows
+    genuinely have zero samples of a given risk class, which is a legitimate state,
+    not invalid input, so class count is fixed via XGB_PARAMS instead.
+
+    Returns (booster, metadata).
+    """
     sw = compute_sample_weight("balanced", y_train)
-    clf = XGBClassifier(
-        n_estimators=XGB_N_ESTIMATORS,
-        learning_rate=XGB_LR,
-        max_depth=XGB_MAX_DEPTH,
-        subsample=XGB_SUBSAMPLE,
-        colsample_bytree=XGB_COLSAMPLE,
-        eval_metric="mlogloss",
-        random_state=42,
-        n_jobs=-1,
-        verbosity=0,
-    )
-    clf.fit(X_train, y_train, sample_weight=sw, verbose=False)
+    dtrain = DMatrix(X_train, label=y_train, weight=sw)
+    booster = xgb_train(XGB_PARAMS, dtrain, num_boost_round=XGB_N_ESTIMATORS)
+
     cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-    cv_f1 = cross_val_score(clf, X_train, y_train, cv=cv, scoring="f1_macro")
-    return clf, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
+    cv_f1_scores = []
+    for train_idx, val_idx in cv.split(X_train, y_train):
+        fold_booster = xgb_train(
+            XGB_PARAMS,
+            DMatrix(X_train[train_idx], label=y_train[train_idx]),
+            num_boost_round=XGB_N_ESTIMATORS,
+        )
+        fold_pred = np.argmax(fold_booster.predict(DMatrix(X_train[val_idx])), axis=1)
+        cv_f1_scores.append(f1_score(y_train[val_idx], fold_pred, average="macro"))
+
+    cv_f1 = np.array(cv_f1_scores)
+    return booster, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
+
+
+def pad_rf_proba(rf: RandomForestClassifier, proba: np.ndarray) -> np.ndarray:
+    """
+    Expand RF's predict_proba output to the full FOOD_CLASSES width.
+
+    RandomForestClassifier only emits a column per class it actually saw
+    during fit (via rf.classes_), whereas train_xgb's Booster always outputs
+    len(FOOD_CLASSES) columns regardless of what the AOI's data contained.
+    Without padding, an AOI missing one risk class produces mismatched shapes
+    (e.g. (n, 2) vs (n, 3)) the moment RF and XGBoost probabilities are
+    combined for the ensemble.
+    """
+    n_classes = len(FOOD_CLASSES)
+    if proba.shape[1] == n_classes:
+        return proba
+    padded = np.zeros((proba.shape[0], n_classes), dtype=proba.dtype)
+    padded[:, rf.classes_.astype(int)] = proba
+    return padded
 
 
 def evaluate_models(
     rf: RandomForestClassifier,
-    xgb: XGBClassifier,
+    xgb: Booster,
     X_test: np.ndarray,
     y_test: np.ndarray,
 ) -> dict:
     """Evaluate RF, XGBoost, and mean-proba ensemble on the held-out test set."""
     rf_pred = rf.predict(X_test).astype(int)
-    xgb_pred = xgb.predict(X_test).astype(int)
-    ens_pred = np.argmax(
-        (rf.predict_proba(X_test) + xgb.predict_proba(X_test)) / 2.0, axis=1
-    ).astype(int)
+    proba_rf = pad_rf_proba(rf, rf.predict_proba(X_test))
+    proba_xgb = xgb.predict(DMatrix(X_test))
+    xgb_pred = np.argmax(proba_xgb, axis=1).astype(int)
+    ens_pred = np.argmax((proba_rf + proba_xgb) / 2.0, axis=1).astype(int)
 
     def _metrics(pred: np.ndarray, label: str) -> dict:
         return {
@@ -101,7 +145,7 @@ def evaluate_models(
     }
 
 
-def compute_shap_importance(xgb: XGBClassifier, X_test: np.ndarray) -> dict:
+def compute_shap_importance(xgb: Booster, X_test: np.ndarray) -> dict:
     """
     TreeExplainer SHAP on XGBoost (always used for SHAP regardless of model_type).
     Returns features sorted by descending mean |SHAP| averaged across all classes.
@@ -212,7 +256,7 @@ class FoodSecurityModel:
 
     def __init__(self) -> None:
         self.rf: RandomForestClassifier | None = None
-        self.xgb: XGBClassifier | None = None
+        self.xgb: Booster | None = None
         self.scaler: StandardScaler | None = None
 
     def predict(
@@ -297,9 +341,10 @@ class FoodSecurityModel:
         if model_type == "rf":
             all_preds = self.rf.predict(X_all_s).astype(int)
         elif model_type == "xgboost":
-            all_preds = self.xgb.predict(X_all_s).astype(int)
+            all_preds = np.argmax(self.xgb.predict(DMatrix(X_all_s)), axis=1).astype(int)
         else:
-            proba = (self.rf.predict_proba(X_all_s) + self.xgb.predict_proba(X_all_s)) / 2.0
+            proba_rf = pad_rf_proba(self.rf, self.rf.predict_proba(X_all_s))
+            proba = (proba_rf + self.xgb.predict(DMatrix(X_all_s))) / 2.0
             all_preds = np.argmax(proba, axis=1).astype(int)
 
         n_total = len(all_preds)
