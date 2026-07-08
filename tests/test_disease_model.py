@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.model_selection import train_test_split
-from xgboost import XGBClassifier
+from xgboost import Booster, DMatrix
 
 from climate_change.disease.model import (
     VALID_MODEL_TYPES,
@@ -44,14 +44,29 @@ class TestTrainXgb:
     def test_returns_model_and_metadata(self, tiny_multiclass_xy):
         X, y = tiny_multiclass_xy
         xgb, meta = train_xgb(X[:60], y[:60], cv_folds=2)
-        assert isinstance(xgb, XGBClassifier)
+        assert isinstance(xgb, Booster)
         assert "cv_f1_mean" in meta
 
     def test_predictions_three_classes(self, tiny_multiclass_xy):
         X, y = tiny_multiclass_xy
         xgb, _ = train_xgb(X[:60], y[:60], cv_folds=2)
-        preds = xgb.predict(X[60:])
+        preds = np.argmax(xgb.predict(DMatrix(X[60:])), axis=1)
         assert set(preds).issubset({0, 1, 2})
+
+    def test_handles_missing_class_in_training_data(self):
+        """Regression test: an AOI/time window with zero samples of one risk
+        class must train successfully instead of raising the XGBClassifier
+        'Invalid classes inferred from unique values of `y`' error."""
+        rng = np.random.default_rng(1)
+        X = rng.standard_normal((40, 7))
+        y = np.repeat([1, 2], 20)  # class 0 ("Low Risk") entirely absent
+
+        xgb, meta = train_xgb(X, y, cv_folds=2)
+
+        assert isinstance(xgb, Booster)
+        proba = xgb.predict(DMatrix(X))
+        assert proba.shape == (40, 3)
+        assert set(np.argmax(proba, axis=1)).issubset({0, 1, 2})
 
 
 class TestEvaluateModels:

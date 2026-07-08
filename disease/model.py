@@ -10,7 +10,8 @@ from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_sample_weight
-from xgboost import XGBClassifier
+from xgboost import Booster, DMatrix
+from xgboost import train as xgb_train
 
 from .features import DISEASE_CLASSES, DISEASE_COLORS, FEATURE_COLS
 
@@ -55,41 +56,65 @@ def train_gbm(
     return clf, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
 
 
+XGB_PARAMS = {
+    "objective": "multi:softprob",
+    "num_class": len(DISEASE_CLASSES),
+    "learning_rate": XGB_LR,
+    "max_depth": XGB_MAX_DEPTH,
+    "subsample": XGB_SUBSAMPLE,
+    "colsample_bytree": XGB_COLSAMPLE,
+    "eval_metric": "mlogloss",
+    "seed": 42,
+    "verbosity": 0,
+}
+
+
 def train_xgb(
     X_train: np.ndarray,
     y_train: np.ndarray,
     cv_folds: int = 5,
-) -> tuple[XGBClassifier, dict]:
-    """Fit XGBoost multi-class classifier with sample weights. Returns (model, metadata)."""
+) -> tuple[Booster, dict]:
+    """
+    Fit XGBoost multi-class classifier via the low-level Booster API with sample weights.
+
+    Uses xgboost.train() rather than the XGBClassifier sklearn wrapper because the
+    wrapper requires every class in DISEASE_CLASSES to appear in y_train (it infers
+    num_class from np.unique(y_train) and rejects gaps). Some AOIs/time windows
+    genuinely have zero samples of a given risk class, which is a legitimate state,
+    not invalid input, so class count is fixed via XGB_PARAMS instead.
+
+    Returns (booster, metadata).
+    """
     sw = compute_sample_weight("balanced", y_train)
-    clf = XGBClassifier(
-        n_estimators=XGB_N_ESTIMATORS,
-        learning_rate=XGB_LR,
-        max_depth=XGB_MAX_DEPTH,
-        subsample=XGB_SUBSAMPLE,
-        colsample_bytree=XGB_COLSAMPLE,
-        eval_metric="mlogloss",
-        random_state=42,
-        n_jobs=-1,
-        verbosity=0,
-    )
-    clf.fit(X_train, y_train, sample_weight=sw, verbose=False)
+    dtrain = DMatrix(X_train, label=y_train, weight=sw)
+    booster = xgb_train(XGB_PARAMS, dtrain, num_boost_round=XGB_N_ESTIMATORS)
+
     cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-    cv_f1 = cross_val_score(clf, X_train, y_train, cv=cv, scoring="f1_macro")
-    return clf, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
+    cv_f1_scores = []
+    for train_idx, val_idx in cv.split(X_train, y_train):
+        fold_booster = xgb_train(
+            XGB_PARAMS,
+            DMatrix(X_train[train_idx], label=y_train[train_idx]),
+            num_boost_round=XGB_N_ESTIMATORS,
+        )
+        fold_pred = np.argmax(fold_booster.predict(DMatrix(X_train[val_idx])), axis=1)
+        cv_f1_scores.append(f1_score(y_train[val_idx], fold_pred, average="macro"))
+
+    cv_f1 = np.array(cv_f1_scores)
+    return booster, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
 
 
 def evaluate_models(
     gbm: GradientBoostingClassifier,
-    xgb: XGBClassifier,
+    xgb: Booster,
     X_test: np.ndarray,
     y_test: np.ndarray,
 ) -> dict:
     """Evaluate GBM, XGBoost, and mean-proba ensemble on the held-out test set."""
     gbm_pred = gbm.predict(X_test).astype(int)
-    xgb_pred = xgb.predict(X_test).astype(int)
     proba_gbm = gbm.predict_proba(X_test)
-    proba_xgb = xgb.predict_proba(X_test)
+    proba_xgb = xgb.predict(DMatrix(X_test))
+    xgb_pred = np.argmax(proba_xgb, axis=1).astype(int)
     ens_pred = np.argmax((proba_gbm + proba_xgb) / 2.0, axis=1).astype(int)
 
     def _metrics(pred: np.ndarray, label: str) -> dict:
@@ -108,7 +133,7 @@ def evaluate_models(
     }
 
 
-def compute_shap_importance(xgb: XGBClassifier, X_test: np.ndarray) -> dict:
+def compute_shap_importance(xgb: Booster, X_test: np.ndarray) -> dict:
     """
     TreeExplainer SHAP on XGBoost (always used for SHAP regardless of model_type).
     Returns features sorted by descending mean |SHAP| averaged across all classes.
@@ -263,7 +288,7 @@ class DiseaseModel:
 
     def __init__(self) -> None:
         self.gbm: GradientBoostingClassifier | None = None
-        self.xgb: XGBClassifier | None = None
+        self.xgb: Booster | None = None
         self.scaler: StandardScaler | None = None
 
     def predict(
@@ -328,9 +353,9 @@ class DiseaseModel:
         if model_type == "gbm":
             all_preds = self.gbm.predict(X_all_s).astype(int)
         elif model_type == "xgboost":
-            all_preds = self.xgb.predict(X_all_s).astype(int)
+            all_preds = np.argmax(self.xgb.predict(DMatrix(X_all_s)), axis=1).astype(int)
         else:
-            proba = (self.gbm.predict_proba(X_all_s) + self.xgb.predict_proba(X_all_s)) / 2.0
+            proba = (self.gbm.predict_proba(X_all_s) + self.xgb.predict(DMatrix(X_all_s))) / 2.0
             all_preds = np.argmax(proba, axis=1).astype(int)
 
         hotspots = detect_hotspots(df, all_preds)
