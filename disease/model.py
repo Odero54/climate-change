@@ -104,6 +104,25 @@ def train_xgb(
     return booster, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
 
 
+def pad_gbm_proba(gbm: GradientBoostingClassifier, proba: np.ndarray) -> np.ndarray:
+    """
+    Expand GBM's predict_proba output to the full DISEASE_CLASSES width.
+
+    GradientBoostingClassifier only emits a column per class it actually saw
+    during fit (via gbm.classes_), whereas train_xgb's Booster always outputs
+    len(DISEASE_CLASSES) columns regardless of what the AOI's data contained.
+    Without padding, an AOI missing one risk class produces mismatched shapes
+    (e.g. (n, 2) vs (n, 3)) the moment GBM and XGBoost probabilities are
+    combined for the ensemble.
+    """
+    n_classes = len(DISEASE_CLASSES)
+    if proba.shape[1] == n_classes:
+        return proba
+    padded = np.zeros((proba.shape[0], n_classes), dtype=proba.dtype)
+    padded[:, gbm.classes_.astype(int)] = proba
+    return padded
+
+
 def evaluate_models(
     gbm: GradientBoostingClassifier,
     xgb: Booster,
@@ -112,7 +131,7 @@ def evaluate_models(
 ) -> dict:
     """Evaluate GBM, XGBoost, and mean-proba ensemble on the held-out test set."""
     gbm_pred = gbm.predict(X_test).astype(int)
-    proba_gbm = gbm.predict_proba(X_test)
+    proba_gbm = pad_gbm_proba(gbm, gbm.predict_proba(X_test))
     proba_xgb = xgb.predict(DMatrix(X_test))
     xgb_pred = np.argmax(proba_xgb, axis=1).astype(int)
     ens_pred = np.argmax((proba_gbm + proba_xgb) / 2.0, axis=1).astype(int)
@@ -355,7 +374,8 @@ class DiseaseModel:
         elif model_type == "xgboost":
             all_preds = np.argmax(self.xgb.predict(DMatrix(X_all_s)), axis=1).astype(int)
         else:
-            proba = (self.gbm.predict_proba(X_all_s) + self.xgb.predict(DMatrix(X_all_s))) / 2.0
+            proba_gbm = pad_gbm_proba(self.gbm, self.gbm.predict_proba(X_all_s))
+            proba = (proba_gbm + self.xgb.predict(DMatrix(X_all_s))) / 2.0
             all_preds = np.argmax(proba, axis=1).astype(int)
 
         hotspots = detect_hotspots(df, all_preds)

@@ -14,6 +14,7 @@ from xgboost import Booster, DMatrix
 from climate_change.core.landcover_mask import WATER_CLASS
 
 from .features import FEATURE_COLS, align_datasets
+from .model import pad_gbm_proba
 
 _log = logging.getLogger(__name__)
 
@@ -87,7 +88,8 @@ def export_disease_cog(
     elif model_type == "xgboost":
         proba = xgb_model.predict(DMatrix(X_valid))
     else:  # ensemble
-        proba = (gbm_model.predict_proba(X_valid) + xgb_model.predict(DMatrix(X_valid))) / 2.0
+        proba_gbm = pad_gbm_proba(gbm_model, gbm_model.predict_proba(X_valid))
+        proba = (proba_gbm + xgb_model.predict(DMatrix(X_valid))) / 2.0
 
     pred_classes = np.argmax(proba, axis=1).astype(np.uint8) + 1  # 1-indexed
 
