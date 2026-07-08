@@ -139,4 +139,4 @@ __all__ = [
     "DiseaseRiskUseCase",
     "LandDegradationUseCase",
 ]
-__version__ = "1.1.2"
+__version__ = "1.1.3"
