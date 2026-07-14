@@ -24,6 +24,8 @@ import pandas as pd
 import requests
 from matplotlib import dates as mdates
 from matplotlib.colors import ListedColormap
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from PIL import Image as PILImage
 
 # PDF report generation runs inside API worker threads, so force a
@@ -664,7 +666,7 @@ class ReportBuilder:
 
         if labels and color_map:
             handles = [
-                plt.Line2D(
+                Line2D(
                     [0],
                     [0],
                     marker="s",
@@ -1006,7 +1008,7 @@ class ReportBuilder:
         story.append(Spacer(1, 0.4 * cm))
 
     @staticmethod
-    def _fig_to_image(fig: plt.Figure, width_cm: float = 15) -> Image:
+    def _fig_to_image(fig: Figure, width_cm: float = 15) -> Image:
         fig_w, fig_h = fig.get_size_inches()
         aspect = fig_h / fig_w
         buf = io.BytesIO()

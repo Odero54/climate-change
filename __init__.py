@@ -19,6 +19,20 @@ Usage:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Satisfies static analysis of __all__ below without eagerly importing
+    # these heavy, dependency-loaded modules at runtime — __getattr__ further
+    # down does the actual lazy import when one of these names is accessed.
+    from climate_change.core.dask_engine import DaskEngine
+    from climate_change.disease import DiseaseRiskUseCase
+    from climate_change.drought import DroughtUseCase
+    from climate_change.flood import FloodRiskUseCase
+    from climate_change.food_security import FoodSecurityUseCase
+    from climate_change.land_degradation import LandDegradationUseCase
+    from climate_change.reporting import ReportBuilder
+
 # Use absolute imports so this file is safe to load without a package context
 # (pytest traverses parent __init__.py files during test discovery).
 #

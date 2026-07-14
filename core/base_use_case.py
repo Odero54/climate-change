@@ -89,6 +89,37 @@ def _aoi_geometries(aoi_geojson: dict | None) -> list[dict]:
     return []
 
 
+def _aoi_area_ha(aoi_geojson: dict | None) -> float | None:
+    """Geodesic area (WGS84 ellipsoid) of an AOI GeoJSON in hectares, or None if unavailable."""
+    if not aoi_geojson:
+        return None
+    try:
+        from pyproj import Geod
+        from shapely.geometry import shape
+
+        geom = shape(aoi_geojson)
+        area_m2, _ = Geod(ellps="WGS84").geometry_area_perimeter(geom)
+        return abs(float(area_m2)) / 10_000.0
+    except Exception:
+        return None
+
+
+def _attach_risk_area(chart: dict | None, total_area_ha: float | None) -> None:
+    """Distribute total_area_ha across a chart's percentage classes in place.
+
+    `chart` is a single riskDist/severity-style dict with a `data` list of
+    percentages (0-100); writes `area_ha`/`data_ha` (hectares per class) onto it.
+    """
+    if not total_area_ha or not isinstance(chart, dict):
+        return
+    percentages = chart.get("data")
+    if not isinstance(percentages, list):
+        return
+    areas = [round(total_area_ha * (float(pct) / 100.0), 2) for pct in percentages]
+    chart["area_ha"] = areas
+    chart["data_ha"] = areas
+
+
 @dataclass
 class AnalysisConfig:
     """Input contract accepted by every `BaseUseCase.execute()`.

@@ -168,7 +168,7 @@ def _yearly_drought_maps_xee_v1(
     end = f"{end_year}-12-31"
     chunks = {"time": 12}
     grid = fit_geometry(
-        shapely.geometry.box(*bbox),
+        shapely.geometry.box(bbox[0], bbox[1], bbox[2], bbox[3]),
         grid_crs="EPSG:4326",
         grid_scale=(scale, -scale),
     )

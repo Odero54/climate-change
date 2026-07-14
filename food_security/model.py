@@ -316,8 +316,8 @@ class FoodSecurityModel:
         shap_payload = compute_shap_importance(self.xgb, X_test_s)
 
         # Compute VHI summary scalars from the feature DataFrame
-        vci_mean = float(df["vci"].mean()) if "vci" in df.columns else 0.0
-        tci_mean = float(df["tci"].mean()) if "tci" in df.columns else 0.0
+        vci_mean = float(cast(float, df["vci"].mean())) if "vci" in df.columns else 0.0
+        tci_mean = float(cast(float, df["tci"].mean())) if "tci" in df.columns else 0.0
         vhi_mean = 0.5 * vci_mean + 0.5 * tci_mean
 
         charts = build_food_security_charts(
@@ -374,8 +374,8 @@ class FoodSecurityModel:
         if "lon" in df.columns and "lat" in df.columns:
             _sample_points = [
                 {
-                    "lon": round(float(df["lon"].iat[i]), 5),
-                    "lat": round(float(df["lat"].iat[i]), 5),
+                    "lon": round(cast(float, df["lon"].iat[i]), 5),
+                    "lat": round(cast(float, df["lat"].iat[i]), 5),
                     "risk_class": _FOOD_CLASS_NAMES[int(all_preds[i])],
                 }
                 for i in range(len(df))

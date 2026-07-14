@@ -11,7 +11,9 @@ from climate_change.core.base_use_case import (
     AnalysisConfig,
     AnalysisOutput,
     BaseUseCase,
+    _aoi_area_ha,
     _aoi_geometries,
+    _attach_risk_area,
     _lons_lats,
     _round_floats,
 )
@@ -29,7 +31,7 @@ def _run_cdi_pipeline_local(raw_data: dict) -> dict:
     # Python client when .compute() is triggered. Keep the computation in the
     # main process and avoid distributed P2P rechunk shuffle, which requires
     # worker context and can fail inside the API request thread.
-    import dask
+    import dask.config
 
     with dask.config.set(
         scheduler="synchronous",
@@ -89,6 +91,10 @@ class DroughtUseCase(BaseUseCase):
         """
         model_type = config.extra_params.get("model_type", "lstm")
         result = DroughtModel().predict(features, {"model_type": model_type})
+        total_area_ha = _aoi_area_ha(config.aoi_geojson)
+        if total_area_ha:
+            result["stats"]["total_area_ha"] = round(total_area_ha, 1)
+            _attach_risk_area(result["charts"].get("severity_distribution"), total_area_ha)
         geojson = self._cdi_to_geojson(features, config.aoi_geojson)
         raster_paths: dict[str, str] | None = None
         raster_error: str | None = None
@@ -139,6 +145,11 @@ class DroughtUseCase(BaseUseCase):
             aoi_geojson=config.get("aoi_geojson"),
         )
         result["raster"] = {k: str(v) for k, v in cog_paths.items()}
+
+        total_area_ha = _aoi_area_ha(config.get("aoi_geojson"))
+        if total_area_ha:
+            result["stats"]["total_area_ha"] = round(total_area_ha, 1)
+            _attach_risk_area(result["charts"].get("severity_distribution"), total_area_ha)
         return result
 
     def run_date_ranges(self, config: dict, date_ranges: list[dict]) -> list[dict]:

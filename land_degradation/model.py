@@ -372,8 +372,8 @@ class LandDegradationModel:
         if "lon" in df.columns and "lat" in df.columns:
             _sample_points = [
                 {
-                    "lon": round(float(df["lon"].iat[i]), 5),
-                    "lat": round(float(df["lat"].iat[i]), 5),
+                    "lon": round(cast(float, df["lon"].iat[i]), 5),
+                    "lat": round(cast(float, df["lat"].iat[i]), 5),
                     "risk_class": _DEG_CLASS_NAMES[int(all_preds[i])],
                 }
                 for i in range(len(df))

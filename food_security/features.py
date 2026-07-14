@@ -614,7 +614,7 @@ def align_datasets(
     Dask-backed lazy arrays; dask.compute() then materialises them all
     in a single parallel scheduler pass.
     """
-    import dask
+    from dask.base import compute
 
     _CHUNK = {"lat": 256, "lon": 256}
     ref = datasets[ref_key]
@@ -627,5 +627,5 @@ def align_datasets(
         lazy[key] = ds.chunk(_CHUNK).interp(lat=ref.lat, lon=ref.lon, method=method)
 
     keys = list(lazy)
-    computed = dask.compute(*[lazy[k] for k in keys])
+    computed = compute(*[lazy[k] for k in keys])
     return dict(zip(keys, computed))
