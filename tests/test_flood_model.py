@@ -10,6 +10,8 @@ from xgboost import Booster, DMatrix
 from climate_change.flood.features import FEATURE_COLS
 from climate_change.flood.model import (
     VALID_MODEL_TYPES,
+    _safe_cv_folds,
+    _safe_stratify,
     build_flood_charts,
     classify_flood_risk,
     compute_uncertainty,
@@ -19,6 +21,59 @@ from climate_change.flood.model import (
     train_rf,
     train_xgb,
 )
+
+# ── _safe_cv_folds ────────────────────────────────────────────────────────────
+
+
+class TestSafeCvFolds:
+    def test_balanced_classes_clamps_to_cv_folds(self):
+        y = np.array([0] * 50 + [1] * 50)
+        assert _safe_cv_folds(y, cv_folds=5) == 5
+
+    def test_scarce_class_clamps_down_to_its_count(self):
+        y = np.array([0] * 27 + [1] * 3)
+        assert _safe_cv_folds(y, cv_folds=5) == 3
+
+    def test_single_member_class_returns_none(self):
+        y = np.array([0] * 20 + [1] * 1)
+        assert _safe_cv_folds(y, cv_folds=5) is None
+
+    def test_single_well_populated_class_is_not_blocked(self):
+        """Every sampled pixel being the same class (e.g. an AOI/window that's
+        entirely flooded or entirely dry) is a legitimate data state that
+        sklearn's StratifiedKFold handles fine as long as that one class has
+        >= cv_folds members — must not be treated as 'scarce' just because
+        only one class is present."""
+        y = np.array([1] * 80)
+        assert _safe_cv_folds(y, cv_folds=5) == 5
+
+
+# ── _safe_stratify ────────────────────────────────────────────────────────────
+
+
+class TestSafeStratify:
+    def test_balanced_classes_returns_y_unchanged(self):
+        y = np.array([0] * 50 + [1] * 50)
+        result = _safe_stratify(y)
+        assert result is not None
+        np.testing.assert_array_equal(result, y)
+
+    def test_single_member_class_returns_none(self):
+        """Regression test: train_test_split(stratify=y) raises 'The least
+        populated class in y has only 1 member' when a class has exactly 1
+        sample (e.g. a small AOI/window with a single flooded pixel) — must
+        fall back to a non-stratified split instead of crashing."""
+        y = np.array([0] * 49 + [1] * 1)
+        assert _safe_stratify(y) is None
+
+    def test_actually_prevents_train_test_split_crash(self):
+        rng = np.random.default_rng(5)
+        X = rng.standard_normal((50, 10))
+        y = np.array([0] * 49 + [1] * 1)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=_safe_stratify(y)
+        )
+        assert len(X_train) + len(X_test) == 50
 
 
 @pytest.fixture()
@@ -110,6 +165,44 @@ class TestTrainXgb:
         assert prob.shape == (30,)
         assert "cv_f1_mean" in meta
 
+    def test_scarce_minority_class_skips_cv_instead_of_crashing(self):
+        """Regression test: a positive class with fewer members than cv_folds
+        (e.g. a small/urban AOI with very few flooded pixels sampled) used to
+        raise sklearn's 'n_splits=5 cannot be greater than the number of
+        members in each class' ValueError and crash the whole analysis."""
+        rng = np.random.default_rng(3)
+        X_train = rng.standard_normal((30, 10))
+        y_train = np.array([0] * 27 + [1] * 3)  # minority class has only 3 members
+        X_val = rng.standard_normal((10, 10))
+        y_val = np.array([0] * 8 + [1] * 2)
+
+        rf, rf_meta = train_rf(X_train, y_train, cv_folds=5)
+        xgb, xgb_meta = train_xgb(X_train, y_train, X_val, y_val, cv_folds=5)
+
+        assert isinstance(rf, RandomForestClassifier)
+        assert isinstance(xgb, Booster)
+        assert rf_meta["cv_f1_mean"] is not None  # 3 members still supports 3-fold CV
+        assert xgb_meta["cv_f1_mean"] is not None
+
+    def test_single_member_minority_class_returns_none_cv_score(self):
+        """When a class has only 1 member, even 2-fold CV is impossible —
+        cv_f1_mean must be None (not a crash, not a fabricated number)."""
+        rng = np.random.default_rng(4)
+        X_train = rng.standard_normal((21, 10))
+        y_train = np.array([0] * 20 + [1] * 1)
+        X_val = rng.standard_normal((10, 10))
+        y_val = np.array([0] * 9 + [1] * 1)
+
+        rf, rf_meta = train_rf(X_train, y_train, cv_folds=5)
+        xgb, xgb_meta = train_xgb(X_train, y_train, X_val, y_val, cv_folds=5)
+
+        assert isinstance(rf, RandomForestClassifier)
+        assert isinstance(xgb, Booster)
+        assert rf_meta["cv_f1_mean"] is None
+        assert rf_meta["cv_f1_std"] is None
+        assert xgb_meta["cv_f1_mean"] is None
+        assert xgb_meta["cv_f1_std"] is None
+
 
 # ── find_best_threshold ───────────────────────────────────────────────────────
 
@@ -141,6 +234,22 @@ class TestEvaluateModels:
         result = evaluate_models(rf, xgb, X_te, y_te)
         for key in ("rf", "xgb", "ensemble"):
             assert 0.0 <= result[key]["f1"] <= 1.0
+
+    def test_single_class_test_set_returns_none_auc_not_nan(self, tiny_binary_xy):
+        """Regression test: roc_auc_score is undefined when y_test has only
+        one class present (e.g. the scarce class's lone member ended up in
+        train via the non-stratified split fallback) — it returns NaN rather
+        than raising, but NaN isn't valid JSON, so it must surface as None."""
+        X, y = tiny_binary_xy
+        rf, _ = train_rf(X[:40], y[:40], cv_folds=2)
+        xgb, _ = train_xgb(X[:40], y[:40], X[40:], y[40:], cv_folds=2)
+        y_test_single_class = np.zeros(10, dtype=int)
+
+        result = evaluate_models(rf, xgb, X[40:50], y_test_single_class)
+
+        for key in ("rf", "xgb", "ensemble"):
+            assert result[key]["auc"] is None
+            assert 0.0 <= result[key]["f1"] <= 1.0  # f1 still computes fine
 
 
 class TestPositiveClassProba:

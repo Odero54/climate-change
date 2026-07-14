@@ -59,6 +59,37 @@ class FeatureNamedLGBMClassifier(lgb.LGBMClassifier):
         )
 
 
+def _safe_cv_folds(y_train: np.ndarray, cv_folds: int) -> int | None:
+    """Clamp cv_folds to the rarest class's sample count; None if CV isn't meaningful.
+
+    StratifiedKFold/cross_val_score require every class to have at least
+    n_splits members. A small or skewed AOI/date-range can easily sample
+    fewer degraded (or non-degraded) pixels than the default 5 folds, which
+    otherwise crashes the whole analysis instead of just skipping CV. Uses
+    np.unique (not np.bincount) so a class that's entirely absent — a
+    legitimate, separately-handled data state — isn't mistaken for a scarce one.
+    """
+    _, counts = np.unique(np.asarray(y_train).astype(int), return_counts=True)
+    min_class_count = int(counts.min()) if counts.size else 0
+    if min_class_count < 2:
+        return None
+    return min(cv_folds, min_class_count)
+
+
+def _safe_stratify(y: np.ndarray) -> np.ndarray | None:
+    """Return y for a stratified train_test_split, or None to fall back to a
+    plain random split.
+
+    train_test_split(stratify=y) requires every class to have >= 2 members
+    (one for train, one for test) — the same small/skewed-AOI scarcity that
+    _safe_cv_folds guards against, but one step earlier in the pipeline.
+    """
+    _, counts = np.unique(np.asarray(y).astype(int), return_counts=True)
+    if counts.size and counts.min() < 2:
+        return None
+    return y
+
+
 def train_rf(
     X_train: np.ndarray,
     y_train: np.ndarray,
@@ -74,7 +105,10 @@ def train_rf(
         n_jobs=-1,
     )
     rf.fit(X_train, y_train)
-    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    folds = _safe_cv_folds(y_train, cv_folds)
+    if folds is None:
+        return rf, {"cv_f1_mean": None, "cv_f1_std": None}
+    cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=42)
     cv_f1 = cross_val_score(rf, X_train, y_train, cv=cv, scoring="f1_weighted")
     return rf, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
 
@@ -96,7 +130,10 @@ def train_lgbm(
     )
     X_train_df = pd.DataFrame(X_train, columns=FEATURE_COLS[: X_train.shape[1]])
     clf.fit(X_train_df, y_train)
-    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    folds = _safe_cv_folds(y_train, cv_folds)
+    if folds is None:
+        return clf, {"cv_f1_mean": None, "cv_f1_std": None}
+    cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=42)
     cv_f1 = cross_val_score(clf, X_train_df, y_train, cv=cv, scoring="f1_weighted")  # pyright: ignore[reportArgumentType]
     return clf, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
 
@@ -166,6 +203,23 @@ def compute_ndvi_trend(ndvi_annual: pd.Series) -> dict:
     years = valid.index.values.astype(float)
     vals = np.asarray(valid.values)
 
+    # A short/unusual date range (or an AOI where most years drop out via
+    # dropna() above due to cloud cover) can leave fewer than 2 valid annual
+    # points. linregress/kendalltau silently return NaN rather than raising
+    # for <2 points, which would otherwise poison the JSON response — return
+    # None for the undefined stats instead.
+    if len(years) < 2:
+        return {
+            "ndvi_trend_per_year": None,
+            "ndvi_trend_r2": None,
+            "ndvi_trend_p": None,
+            "mk_tau": None,
+            "mk_p": None,
+            "mk_significant": False,
+            "breakpoint_years": [],
+            "breakpoint_year": None,
+        }
+
     _ols = stats.linregress(years, vals)
     ols_slope = cast(float, _ols[0])
     ols_rvalue = cast(float, _ols[2])
@@ -180,16 +234,24 @@ def compute_ndvi_trend(ndvi_annual: pd.Series) -> dict:
     min_size = 2
     jump = 1
 
+    # sanity_check(n_obs, k, jump, min_size) is False for every k when n_obs
+    # is too small for even 1 breakpoint (Binseg needs n_obs >= (k+1)*min_size).
+    # The `next(..., 1)` fallback below must be 0 in that case — falling back
+    # to 1 regardless would call binseg.predict(n_bkps=1) on a segmentation
+    # sanity_check already rejected, raising ruptures.BadSegmentationParameters.
     n_bkps = next(
         (k for k in range(3, 0, -1) if sanity_check(n_obs, k, jump, min_size)),
-        1,
+        0,
     )
-    binseg = rpt.Binseg(model="rbf", min_size=min_size, jump=jump).fit(signal)
-    bkps_raw = binseg.predict(n_bkps=n_bkps)
-    # bkps_raw indices reference the *valid* (post-dropna) array, so map
-    # back through valid.index (not the original full index).
-    valid_idx = valid.index.tolist()
-    bkp_years = [int(valid_idx[i - 1]) for i in bkps_raw[:-1]]
+    if n_bkps == 0:
+        bkp_years: list[int] = []
+    else:
+        binseg = rpt.Binseg(model="rbf", min_size=min_size, jump=jump).fit(signal)
+        bkps_raw = binseg.predict(n_bkps=n_bkps)
+        # bkps_raw indices reference the *valid* (post-dropna) array, so map
+        # back through valid.index (not the original full index).
+        valid_idx = valid.index.tolist()
+        bkp_years = [int(valid_idx[i - 1]) for i in bkps_raw[:-1]]
 
     return {
         "ndvi_trend_per_year": round(float(ols_slope), 5),
@@ -306,7 +368,7 @@ class LandDegradationModel:
         y = df["deg_class"].to_numpy(dtype=np.intp)
 
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
+            X, y, test_size=0.2, random_state=42, stratify=_safe_stratify(y)
         )
         self.scaler = StandardScaler()
         X_train_s = self.scaler.fit_transform(X_train)
@@ -344,10 +406,14 @@ class LandDegradationModel:
             "model_type": model_type,
             "n_pixels_sampled": int(len(df)),
             "degraded_label_pct": round(float(y.mean() * 100), 1),
-            "rf_cv_f1": round(rf_meta["cv_f1_mean"], 4),
+            "rf_cv_f1": round(rf_meta["cv_f1_mean"], 4)
+            if rf_meta["cv_f1_mean"] is not None
+            else None,
             "rf_f1": eval_result["rf"]["f1"],
             "rf_accuracy": eval_result["rf"]["accuracy"],
-            "lgbm_cv_f1": round(lgbm_meta["cv_f1_mean"], 4),
+            "lgbm_cv_f1": round(lgbm_meta["cv_f1_mean"], 4)
+            if lgbm_meta["cv_f1_mean"] is not None
+            else None,
             "lgbm_f1": eval_result["lgbm"]["f1"],
             "lgbm_accuracy": eval_result["lgbm"]["accuracy"],
             "ensemble_f1": eval_result["ensemble"]["f1"],

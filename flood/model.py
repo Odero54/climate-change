@@ -48,6 +48,37 @@ RISK_COLORS: dict[str, str] = {
 }
 
 
+def _safe_cv_folds(y_train: np.ndarray, cv_folds: int) -> int | None:
+    """Clamp cv_folds to the rarest class's sample count; None if CV isn't meaningful.
+
+    StratifiedKFold/cross_val_score require every class to have at least
+    n_splits members. A small or skewed AOI/date-range can easily sample
+    fewer positive-class pixels than the default 5 folds, which otherwise
+    crashes the whole analysis instead of just skipping CV. Uses np.unique
+    (not np.bincount) so a class that's entirely absent — a legitimate,
+    separately-handled data state — isn't mistaken for a scarce one.
+    """
+    _, counts = np.unique(np.asarray(y_train).astype(int), return_counts=True)
+    min_class_count = int(counts.min()) if counts.size else 0
+    if min_class_count < 2:
+        return None
+    return min(cv_folds, min_class_count)
+
+
+def _safe_stratify(y: np.ndarray) -> np.ndarray | None:
+    """Return y for a stratified train_test_split, or None to fall back to a
+    plain random split.
+
+    train_test_split(stratify=y) requires every class to have >= 2 members
+    (one for train, one for test) — the same small/skewed-AOI scarcity that
+    _safe_cv_folds guards against, but one step earlier in the pipeline.
+    """
+    _, counts = np.unique(np.asarray(y).astype(int), return_counts=True)
+    if counts.size and counts.min() < 2:
+        return None
+    return y
+
+
 # Risk classification
 def classify_flood_risk(prob: np.ndarray) -> np.ndarray:
     """Map flood probability array to 4-class string labels."""
@@ -73,7 +104,10 @@ def train_rf(
         n_jobs=-1,
     )
     rf.fit(X_train, y_train)
-    cv_f1 = cross_val_score(rf, X_train, y_train, cv=cv_folds, scoring="f1")
+    folds = _safe_cv_folds(y_train, cv_folds)
+    if folds is None:
+        return rf, {"cv_f1_mean": None, "cv_f1_std": None}
+    cv_f1 = cross_val_score(rf, X_train, y_train, cv=folds, scoring="f1")
     return rf, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
 
 
@@ -106,7 +140,10 @@ def train_xgb(
         verbose_eval=False,
     )
 
-    cv = StratifiedKFold(n_splits=cv_folds)
+    folds = _safe_cv_folds(y_train, cv_folds)
+    if folds is None:
+        return booster, {"cv_f1_mean": None, "cv_f1_std": None}
+    cv = StratifiedKFold(n_splits=folds)
     cv_f1_scores = []
     for train_idx, val_idx in cv.split(X_train, y_train):
         fold_scale_pos_weight = float(
@@ -166,10 +203,15 @@ def evaluate_models(
     def _metrics(prob: np.ndarray, label: str) -> dict:
         thresh, _ = find_best_threshold(prob, y_test)
         pred = (prob >= thresh).astype(int)
+        # roc_auc_score is undefined (returns NaN, which isn't valid JSON) when
+        # y_test ends up with only one class — a real possibility for a scarce
+        # class routed through the non-stratified split fallback in predict().
+        has_both_classes = len(np.unique(y_test)) > 1
+        auc = round(float(roc_auc_score(y_test, prob)), 4) if has_both_classes else None
         return {
             "label": label,
             "f1": round(float(f1_score(y_test, pred)), 4),
-            "auc": round(float(roc_auc_score(y_test, prob)), 4),
+            "auc": auc,
             "threshold": round(thresh, 4),
             "predictions": pred.tolist(),
             "probabilities": prob.round(4).tolist(),
@@ -320,7 +362,7 @@ class FloodModel:
         y = df["is_flooded"].to_numpy(dtype=np.intp)
 
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
+            X, y, test_size=0.2, random_state=42, stratify=_safe_stratify(y)
         )
 
         # Train RF and XGBoost concurrently when the Dask cluster is running,
@@ -367,10 +409,14 @@ class FloodModel:
             "model_type": model_type,
             "n_pixels_sampled": int(len(df)),
             "flooded_pct": round(float(y.mean() * 100), 1),
-            "rf_cv_f1": round(rf_meta["cv_f1_mean"], 4),
+            "rf_cv_f1": round(rf_meta["cv_f1_mean"], 4)
+            if rf_meta["cv_f1_mean"] is not None
+            else None,
             "rf_f1": eval_result["rf"]["f1"],
             "rf_auc": eval_result["rf"]["auc"],
-            "xgb_cv_f1": round(xgb_meta["cv_f1_mean"], 4),
+            "xgb_cv_f1": round(xgb_meta["cv_f1_mean"], 4)
+            if xgb_meta["cv_f1_mean"] is not None
+            else None,
             "xgb_f1": eval_result["xgb"]["f1"],
             "xgb_auc": eval_result["xgb"]["auc"],
             "ensemble_f1": eval_result["ensemble"]["f1"],

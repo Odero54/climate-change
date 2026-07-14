@@ -29,6 +29,37 @@ XGB_SUBSAMPLE = 0.8
 XGB_COLSAMPLE = 0.8
 
 
+def _safe_cv_folds(y_train: np.ndarray, cv_folds: int) -> int | None:
+    """Clamp cv_folds to the rarest class's sample count; None if CV isn't meaningful.
+
+    StratifiedKFold/cross_val_score require every class to have at least
+    n_splits members. A small or skewed AOI/date-range can easily sample
+    fewer pixels of the rarest risk class than the default 5 folds, which
+    otherwise crashes the whole analysis instead of just skipping CV. Uses
+    np.unique (not np.bincount) so a class that's entirely absent — a
+    legitimate, separately-handled data state — isn't mistaken for a scarce one.
+    """
+    _, counts = np.unique(np.asarray(y_train).astype(int), return_counts=True)
+    min_class_count = int(counts.min()) if counts.size else 0
+    if min_class_count < 2:
+        return None
+    return min(cv_folds, min_class_count)
+
+
+def _safe_stratify(y: np.ndarray) -> np.ndarray | None:
+    """Return y for a stratified train_test_split, or None to fall back to a
+    plain random split.
+
+    train_test_split(stratify=y) requires every class to have >= 2 members
+    (one for train, one for test) — the same small/skewed-AOI scarcity that
+    _safe_cv_folds guards against, but one step earlier in the pipeline.
+    """
+    _, counts = np.unique(np.asarray(y).astype(int), return_counts=True)
+    if counts.size and counts.min() < 2:
+        return None
+    return y
+
+
 def train_rf(
     X_train: np.ndarray,
     y_train: np.ndarray,
@@ -44,7 +75,10 @@ def train_rf(
         n_jobs=-1,
     )
     clf.fit(X_train, y_train)
-    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    folds = _safe_cv_folds(y_train, cv_folds)
+    if folds is None:
+        return clf, {"cv_f1_mean": None, "cv_f1_std": None}
+    cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=42)
     cv_f1 = cross_val_score(clf, X_train, y_train, cv=cv, scoring="f1_macro")
     return clf, {"cv_f1_mean": float(cv_f1.mean()), "cv_f1_std": float(cv_f1.std())}
 
@@ -82,7 +116,10 @@ def train_xgb(
     dtrain = DMatrix(X_train, label=y_train, weight=sw)
     booster = xgb_train(XGB_PARAMS, dtrain, num_boost_round=XGB_N_ESTIMATORS)
 
-    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    folds = _safe_cv_folds(y_train, cv_folds)
+    if folds is None:
+        return booster, {"cv_f1_mean": None, "cv_f1_std": None}
+    cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=42)
     cv_f1_scores = []
     for train_idx, val_idx in cv.split(X_train, y_train):
         fold_booster = xgb_train(
@@ -290,7 +327,7 @@ class FoodSecurityModel:
         y = df["label"].to_numpy(dtype=np.intp)
 
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.20, random_state=42, stratify=y
+            X, y, test_size=0.20, random_state=42, stratify=_safe_stratify(y)
         )
         self.scaler = StandardScaler()
         X_train_s = self.scaler.fit_transform(X_train)
@@ -355,10 +392,14 @@ class FoodSecurityModel:
         stats = {
             "model_type": model_type,
             "n_pixels_sampled": int(len(df)),
-            "rf_cv_f1": round(rf_meta["cv_f1_mean"], 4),
+            "rf_cv_f1": round(rf_meta["cv_f1_mean"], 4)
+            if rf_meta["cv_f1_mean"] is not None
+            else None,
             "rf_f1": eval_result["rf"]["f1"],
             "rf_accuracy": eval_result["rf"]["accuracy"],
-            "xgb_cv_f1": round(xgb_meta["cv_f1_mean"], 4),
+            "xgb_cv_f1": round(xgb_meta["cv_f1_mean"], 4)
+            if xgb_meta["cv_f1_mean"] is not None
+            else None,
             "xgb_f1": eval_result["xgb"]["f1"],
             "xgb_accuracy": eval_result["xgb"]["accuracy"],
             "ensemble_f1": eval_result["ensemble"]["f1"],

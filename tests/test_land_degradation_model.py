@@ -11,12 +11,66 @@ from sklearn.model_selection import train_test_split
 from climate_change.land_degradation.features import DEGRADATION_CLASSES, FEATURE_COLS
 from climate_change.land_degradation.model import (
     VALID_MODEL_TYPES,
+    _safe_cv_folds,
+    _safe_stratify,
     build_degradation_charts,
     compute_ndvi_trend,
     evaluate_models,
     train_lgbm,
     train_rf,
 )
+
+# ── _safe_cv_folds ────────────────────────────────────────────────────────────
+
+
+class TestSafeCvFolds:
+    def test_balanced_classes_clamps_to_cv_folds(self):
+        y = np.array([0] * 50 + [1] * 50)
+        assert _safe_cv_folds(y, cv_folds=5) == 5
+
+    def test_scarce_class_clamps_down_to_its_count(self):
+        y = np.array([0] * 27 + [1] * 3)
+        assert _safe_cv_folds(y, cv_folds=5) == 3
+
+    def test_single_member_class_returns_none(self):
+        y = np.array([0] * 20 + [1] * 1)
+        assert _safe_cv_folds(y, cv_folds=5) is None
+
+    def test_single_well_populated_class_is_not_blocked(self):
+        """Every sampled pixel being the same class (e.g. none degraded) is a
+        legitimate data state that sklearn's StratifiedKFold handles fine as
+        long as that one class has >= cv_folds members — must not be treated
+        as 'scarce' just because only one class is present."""
+        y = np.array([1] * 80)
+        assert _safe_cv_folds(y, cv_folds=5) == 5
+
+
+# ── _safe_stratify ────────────────────────────────────────────────────────────
+
+
+class TestSafeStratify:
+    def test_balanced_classes_returns_y_unchanged(self):
+        y = np.array([0] * 50 + [1] * 50)
+        result = _safe_stratify(y)
+        assert result is not None
+        np.testing.assert_array_equal(result, y)
+
+    def test_single_member_class_returns_none(self):
+        """Regression test: train_test_split(stratify=y) raises 'The least
+        populated class in y has only 1 member' when a class has exactly 1
+        sampled pixel (e.g. an AOI with a single degraded pixel) — must fall
+        back to a non-stratified split instead of crashing."""
+        y = np.array([0] * 49 + [1] * 1)
+        assert _safe_stratify(y) is None
+
+    def test_actually_prevents_train_test_split_crash(self):
+        rng = np.random.default_rng(7)
+        X = rng.standard_normal((50, 8))
+        y = np.array([0] * 49 + [1] * 1)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=_safe_stratify(y)
+        )
+        assert len(X_train) + len(X_test) == 50
 
 
 @pytest.fixture()
@@ -122,6 +176,50 @@ class TestComputeNdviTrend:
         ndvi = pd.Series(values, index=years)
         result = compute_ndvi_trend(ndvi)
         assert "ndvi_trend_per_year" in result
+
+    def test_empty_series_returns_none_not_nan(self):
+        """Regression test: a date range so short (or so cloud-affected) that
+        zero annual NDVI points survive dropna() must return None for the
+        undefined trend stats, not NaN — NaN isn't valid JSON and would
+        corrupt the analysis response."""
+        ndvi = pd.Series([], dtype=float, index=pd.Index([], dtype=int))
+        result = compute_ndvi_trend(ndvi)
+        assert result["ndvi_trend_per_year"] is None
+        assert result["ndvi_trend_r2"] is None
+        assert result["mk_tau"] is None
+        assert result["mk_significant"] is False
+        assert result["breakpoint_years"] == []
+        assert result["breakpoint_year"] is None
+
+    def test_single_point_returns_none_not_nan(self):
+        ndvi = pd.Series([0.45], index=[2022])
+        result = compute_ndvi_trend(ndvi)
+        assert result["ndvi_trend_per_year"] is None
+        assert result["breakpoint_years"] == []
+
+    def test_few_points_does_not_crash_breakpoint_detection(self):
+        """Regression test: with 2-3 annual points, linregress/kendalltau
+        compute fine, but the old code unconditionally fell back to
+        n_bkps=1 even when ruptures.utils.sanity_check said no breakpoint
+        count was feasible — Binseg.predict() then raised
+        BadSegmentationParameters. Must degrade to an empty breakpoint list
+        instead of crashing the whole analysis."""
+        for n in (2, 3):
+            years = list(range(2020, 2020 + n))
+            values = [0.4 + i * 0.01 for i in range(n)]
+            ndvi = pd.Series(values, index=years)
+            result = compute_ndvi_trend(ndvi)
+            assert result["ndvi_trend_per_year"] is not None  # linregress still works
+            assert result["breakpoint_years"] == []  # but too few points to segment
+
+    def test_four_points_breakpoint_detection_still_works(self):
+        """4 points is the minimum where Binseg can actually place a
+        breakpoint — confirms the guard didn't disable the feature entirely."""
+        years = list(range(2020, 2024))
+        values = [0.3, 0.3, 0.6, 0.6]
+        ndvi = pd.Series(values, index=years)
+        result = compute_ndvi_trend(ndvi)
+        assert isinstance(result["breakpoint_years"], list)
 
 
 class TestBuildDegradationCharts:

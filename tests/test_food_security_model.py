@@ -9,11 +9,61 @@ from xgboost import Booster, DMatrix
 from climate_change.food_security.features import FEATURE_COLS, FOOD_CLASSES
 from climate_change.food_security.model import (
     VALID_MODEL_TYPES,
+    _safe_cv_folds,
+    _safe_stratify,
     build_food_security_charts,
     evaluate_models,
     train_rf,
     train_xgb,
 )
+
+# ── _safe_cv_folds ────────────────────────────────────────────────────────────
+
+
+class TestSafeCvFolds:
+    def test_balanced_classes_clamps_to_cv_folds(self):
+        y = np.array([0] * 30 + [1] * 30 + [2] * 30)
+        assert _safe_cv_folds(y, cv_folds=5) == 5
+
+    def test_scarce_class_clamps_down_to_its_count(self):
+        y = np.array([0] * 30 + [1] * 30 + [2] * 3)
+        assert _safe_cv_folds(y, cv_folds=5) == 3
+
+    def test_single_member_class_returns_none(self):
+        y = np.array([0] * 20 + [1] * 20 + [2] * 1)
+        assert _safe_cv_folds(y, cv_folds=5) is None
+
+    def test_entirely_absent_class_is_not_mistaken_for_scarce(self):
+        y = np.array([1] * 40 + [2] * 40)  # class 0 ("Low Risk") never appears
+        assert _safe_cv_folds(y, cv_folds=5) == 5
+
+
+# ── _safe_stratify ────────────────────────────────────────────────────────────
+
+
+class TestSafeStratify:
+    def test_balanced_classes_returns_y_unchanged(self):
+        y = np.array([0] * 30 + [1] * 30 + [2] * 30)
+        result = _safe_stratify(y)
+        assert result is not None
+        np.testing.assert_array_equal(result, y)
+
+    def test_single_member_class_returns_none(self):
+        """Regression test: train_test_split(stratify=y) raises 'The least
+        populated class in y has only 1 member' when a risk class has exactly
+        1 sampled pixel — must fall back to a non-stratified split instead of
+        crashing."""
+        y = np.array([0] * 30 + [1] * 30 + [2] * 1)
+        assert _safe_stratify(y) is None
+
+    def test_actually_prevents_train_test_split_crash(self):
+        rng = np.random.default_rng(8)
+        X = rng.standard_normal((61, 7))
+        y = np.array([0] * 30 + [1] * 30 + [2] * 1)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=_safe_stratify(y)
+        )
+        assert len(X_train) + len(X_test) == 61
 
 
 @pytest.fixture()
