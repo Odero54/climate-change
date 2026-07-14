@@ -208,8 +208,8 @@ def detect_hotspots(
             {
                 "cluster_id": int(cid),
                 "size": int(mask.sum()),
-                "lon": round(float(hr_df.loc[mask, "lon"].mean()), 4),
-                "lat": round(float(hr_df.loc[mask, "lat"].mean()), 4),
+                "lon": round(cast(float, hr_df.loc[mask, "lon"].mean()), 4),
+                "lat": round(cast(float, hr_df.loc[mask, "lat"].mean()), 4),
             }
         )
     return sorted(hotspots, key=lambda h: h["size"], reverse=True)
@@ -407,8 +407,8 @@ class DiseaseModel:
         if "lon" in df.columns and "lat" in df.columns:
             _sample_points = [
                 {
-                    "lon": round(float(df["lon"].iat[i]), 5),
-                    "lat": round(float(df["lat"].iat[i]), 5),
+                    "lon": round(cast(float, df["lon"].iat[i]), 5),
+                    "lat": round(cast(float, df["lat"].iat[i]), 5),
                     "risk_class": _DISEASE_CLASS_NAMES[int(all_preds[i])],
                 }
                 for i in range(len(df))

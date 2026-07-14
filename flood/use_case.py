@@ -9,6 +9,8 @@ from climate_change.core.base_use_case import (
     AnalysisConfig,
     AnalysisOutput,
     BaseUseCase,
+    _aoi_area_ha,
+    _attach_risk_area,
     _ee_geometry_from_geojson,
     _lons_lats,
 )
@@ -126,6 +128,10 @@ class FloodRiskUseCase(BaseUseCase):
                     "mapped_pixel_count": distribution["valid_pixel_count"],
                 }
             )
+            total_area_ha = _aoi_area_ha(config.aoi_geojson)
+            if total_area_ha:
+                result["stats"]["total_area_ha"] = round(total_area_ha, 1)
+                _attach_risk_area(result["charts"]["risk_distribution"], total_area_ha)
 
         geojson_features = []
         if config.aoi_geojson:
@@ -301,6 +307,10 @@ class FloodRiskUseCase(BaseUseCase):
                     "mapped_pixel_count": distribution["valid_pixel_count"],
                 }
             )
+            total_area_ha = _aoi_area_ha(config.get("aoi_geojson"))
+            if total_area_ha:
+                result["stats"]["total_area_ha"] = round(total_area_ha, 1)
+                _attach_risk_area(result["charts"]["risk_distribution"], total_area_ha)
         return result
 
     def run_date_ranges(self, config: dict, date_ranges: list[dict]) -> list[dict]:

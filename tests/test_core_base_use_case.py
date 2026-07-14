@@ -9,7 +9,9 @@ from climate_change.core.base_use_case import (
     AnalysisConfig,
     AnalysisOutput,
     BaseUseCase,
+    _aoi_area_ha,
     _aoi_geometries,
+    _attach_risk_area,
     _ee_geometry_from_geojson,
     _lons_lats,
     _round_floats,
@@ -127,6 +129,53 @@ class TestEeGeometryFromGeojson:
         with patch.dict("sys.modules", {"ee": mock_ee}):
             _ee_geometry_from_geojson(feature_geojson)
         mock_ee.Geometry.assert_called_once_with(simple_polygon_geojson)
+
+
+# ── _aoi_area_ha ──────────────────────────────────────────────────────────────
+
+
+class TestAoiAreaHa:
+    def test_polygon_returns_geodesic_area(self, simple_polygon_geojson):
+        area = _aoi_area_ha(simple_polygon_geojson)
+        assert area == pytest.approx(1_230_877.8, rel=1e-3)
+
+    def test_none_returns_none(self):
+        assert _aoi_area_ha(None) is None
+
+    def test_empty_dict_returns_none(self):
+        assert _aoi_area_ha({}) is None
+
+    def test_malformed_geometry_returns_none(self):
+        assert _aoi_area_ha({"type": "NotAGeometry"}) is None
+
+
+# ── _attach_risk_area ─────────────────────────────────────────────────────────
+
+
+class TestAttachRiskArea:
+    def test_distributes_area_by_percentage(self):
+        chart = {"labels": ["Low", "High"], "data": [25.0, 75.0]}
+        _attach_risk_area(chart, 1000.0)
+        assert chart["area_ha"] == [250.0, 750.0]
+        assert chart["data_ha"] == [250.0, 750.0]
+
+    def test_none_total_area_is_noop(self):
+        chart = {"data": [25.0, 75.0]}
+        _attach_risk_area(chart, None)
+        assert "area_ha" not in chart
+
+    def test_zero_total_area_is_noop(self):
+        chart = {"data": [25.0, 75.0]}
+        _attach_risk_area(chart, 0.0)
+        assert "area_ha" not in chart
+
+    def test_none_chart_is_noop(self):
+        _attach_risk_area(None, 1000.0)  # must not raise
+
+    def test_chart_missing_data_key_is_noop(self):
+        chart = {"labels": ["Low", "High"]}
+        _attach_risk_area(chart, 1000.0)
+        assert "area_ha" not in chart
 
 
 # ── AnalysisConfig ─────────────────────────────────────────────────────────────

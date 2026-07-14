@@ -52,7 +52,7 @@ class TestIsGeeDownloadTooLarge:
                 "text": "",
             },
         )()
-        exc.response = mock_response
+        setattr(exc, "response", mock_response)  # noqa: B010 — Exception has no declared `response` attr
         assert _is_gee_download_too_large(exc) is True
 
     def test_request_payload_marker_returns_true(self):

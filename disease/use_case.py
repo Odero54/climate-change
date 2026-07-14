@@ -10,6 +10,8 @@ from climate_change.core.base_use_case import (
     AnalysisConfig,
     AnalysisOutput,
     BaseUseCase,
+    _aoi_area_ha,
+    _attach_risk_area,
     _ee_geometry_from_geojson,
     _lons_lats,
 )
@@ -109,6 +111,11 @@ class DiseaseRiskUseCase(BaseUseCase):
             _apply_raster_risk_pct(result, raster_result["risk_pct"])
         except Exception as exc:
             raster_error = str(exc)
+
+        total_area_ha = _aoi_area_ha(config.aoi_geojson)
+        if total_area_ha:
+            result["stats"]["total_area_ha"] = round(total_area_ha, 1)
+            _attach_risk_area(result.get("charts", {}).get("riskDist"), total_area_ha)
 
         geojson_features = []
         if config.aoi_geojson:
@@ -240,6 +247,12 @@ class DiseaseRiskUseCase(BaseUseCase):
         result["raster"] = cog_paths or {}
         if cog_error:
             result["raster_error"] = cog_error
+
+        total_area_ha = _aoi_area_ha(config.get("aoi_geojson"))
+        if total_area_ha:
+            result["stats"]["total_area_ha"] = round(total_area_ha, 1)
+            _attach_risk_area(result.get("charts", {}).get("riskDist"), total_area_ha)
+
         result["stats"].update(
             {
                 "bbox": features["bbox"],
