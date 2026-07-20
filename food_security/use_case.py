@@ -18,7 +18,10 @@ from climate_change.core.base_use_case import (
 )
 from climate_change.core.dask_engine import DaskEngine
 from climate_change.core.gee_auth import ensure_gee
+from climate_change.core.population import at_risk_population
 from climate_change.core.runner import register_module
+
+FOOD_SECURITY_AT_RISK_LABELS = ["Medium Risk", "High Risk"]
 
 from .cog_export import export_food_security_cog, predict_food_security_grid
 from .features import (
@@ -311,7 +314,8 @@ class FoodSecurityUseCase(BaseUseCase):
 
         charts = result.setdefault("charts", {})
         charts["riskDist"] = risk_dist
-        result.setdefault("stats", {}).update(
+        stats = result.setdefault("stats", {})
+        stats.update(
             {
                 "analysed_pixels": int(spatial_grid["valid_pixel_count"]),
                 "low_risk_pct": percentages[0],
@@ -319,6 +323,15 @@ class FoodSecurityUseCase(BaseUseCase):
                 "high_risk_pct": percentages[2],
             }
         )
+
+        total_population = spatial_grid.get("total_population")
+        if total_population is not None:
+            pop_by_class = spatial_grid["population_by_class"]
+            stats["total_population"] = total_population
+            stats["population_affected"] = at_risk_population(
+                pop_by_class, FOOD_SECURITY_AT_RISK_LABELS
+            )
+            risk_dist["data_population"] = [pop_by_class.get(label, 0.0) for label in labels]
 
     @staticmethod
     def _risk_grid_to_geojson(spatial_grid: dict) -> list[dict]:

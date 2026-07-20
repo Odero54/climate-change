@@ -1,5 +1,7 @@
 """Tests for drought/cdi_runner.py — pure utility functions (no GEE)."""
 
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -143,6 +145,71 @@ class TestBuildDroughtCharts:
         features = _make_features()
         result = build_drought_charts(features)
         assert len(result["severity_distribution"]["labels"]) > 0
+
+    def test_no_aoi_geojson_skips_population_stats(self):
+        """_make_features() has no 'aoi_geojson' key — population fetch must
+        be skipped entirely (no GEE call), leaving the chart exactly as it
+        was before population-exposure reporting was added."""
+        features = _make_features()
+        result = build_drought_charts(features)
+        severity = result["severity_distribution"]
+        assert "data_population" not in severity
+        assert "total_population" not in severity
+
+    def test_population_data_attached_when_fetch_succeeds(self):
+        """With a mocked population fetch (no live GEE needed) and fully
+        deterministic CDI values, confirm the wiring: 2D classification,
+        zonal sum via core.population.population_exposure, and restricting
+        population_affected to DROUGHT_AT_RISK_LABELS (Extreme + Severe
+        drought only) rather than summing the whole 8-band spectrum.
+
+        Uses a uniform population value per pixel so the assertions hold
+        regardless of the exact row/column orientation population_exposure's
+        upsample-and-zonal-sum produces internally (that mechanism is
+        separately verified in test_core_population.py) — this test only
+        needs to confirm drought classifies 2 of 4 pixels as Extreme/Severe
+        and correctly restricts population_affected to just those.
+        """
+        idx = pd.date_range("2019-01-01", periods=12, freq="MS")
+        df = pd.DataFrame(
+            {
+                "PDI": [1.0] * 12,
+                "TDI": [1.0] * 12,
+                "VDI": [1.0] * 12,
+                "CDI": [1.0] * 12,
+                "severity": ["Near normal"] * 12,
+            },
+            index=idx,
+        )
+        # A 2x2 grid with one pixel per quadrant class: Extreme, Severe,
+        # Near normal, Very wet — exactly 2 of 4 pixels are Extreme/Severe.
+        cdi_values = np.array(
+            [[0.40, 0.60], [1.00, 1.40]]
+        )  # [Extreme, Severe], [Near normal, Very wet]
+        ds = xr.Dataset(
+            {"CDI": (["time", "lon", "lat"], cdi_values[np.newaxis, :, :])},
+            coords={"time": [idx[0]], "lon": [36.0, 36.1], "lat": [-1.0, -0.9]},
+        )
+        features = {
+            "cdi_series": df,
+            "cdi_maps": ds,
+            "aoi_geojson": {"type": "Polygon", "coordinates": [[[36.0, -1.0]]]},
+        }
+        # Every population pixel = 100, so totals are exactly
+        # 100 * pixel_count regardless of spatial arrangement.
+        fake_pop_ds = xr.Dataset(
+            {"population": (["lat", "lon"], np.full((2, 2), 100.0))},
+            coords={"lon": [36.0, 36.1], "lat": [-1.0, -0.9]},
+        )
+        with patch(
+            "climate_change.drought.cdi_runner._fetch_population",
+            return_value=fake_pop_ds,
+        ):
+            result = build_drought_charts(features)
+        severity = result["severity_distribution"]
+        assert severity["total_population"] == 400.0  # 4 pixels * 100
+        assert severity["population_affected"] == 200.0  # 2 of 4 pixels (Extreme + Severe) * 100
+        assert severity["population_affected"] != severity["total_population"]
 
 
 # ── compute_spatial_uncertainty ───────────────────────────────────────────────

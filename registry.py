@@ -41,6 +41,20 @@ class UseCaseInfo:
     max_years: int
     model_options: list[ModelOption]
     default_model: str
+    # False (drought, flood) means the frontend must not offer two-date-range
+    # comparison or multi-region batch analysis for this module — only a
+    # single AOI/date-range at a time. Both modules run each config on a
+    # separate Dask worker for batch modes, and that path is disproportionately
+    # fragile for these two specifically: drought's xee-based GEE access needs
+    # a forced synchronous scheduler that doesn't survive being dispatched to a
+    # remote worker (see drought/use_case.py's _run_cdi_pipeline_local), and
+    # flood requires six independent satellite date windows (pre/post SAR,
+    # rainfall, MNDWI, JRC label) to all resolve per run, so running N of them
+    # in parallel multiplies the odds of a partial-window failure. The
+    # corresponding run_date_ranges/run_multi_regions methods on
+    # DroughtUseCase/FloodRiskUseCase raise ValueError as a backend-side
+    # backstop if this flag is bypassed.
+    single_area_only: bool
 
 
 USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
@@ -83,6 +97,7 @@ USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
             ModelOption("ensemble", "Ensemble (RF + XGBoost)", False, "Best overall · slowest"),
         ],
         default_model="rf",
+        single_area_only=True,
     ),
     "food_security": UseCaseInfo(
         id="food_security",
@@ -125,6 +140,7 @@ USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
             ModelOption("ensemble", "Ensemble (RF + XGBoost)", False, "Best overall · slower"),
         ],
         default_model="rf",
+        single_area_only=False,
     ),
     "disease": UseCaseInfo(
         id="disease",
@@ -169,6 +185,7 @@ USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
             ),
         ],
         default_model="gbm",
+        single_area_only=False,
     ),
     "land_degradation": UseCaseInfo(
         id="land_degradation",
@@ -214,6 +231,7 @@ USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
             ),
         ],
         default_model="lgbm",
+        single_area_only=False,
     ),
     "drought": UseCaseInfo(
         id="drought",
@@ -266,6 +284,7 @@ USE_CASE_REGISTRY: dict[str, UseCaseInfo] = {
             ),
         ],
         default_model="lstm",
+        single_area_only=True,
     ),
 }
 

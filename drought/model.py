@@ -256,6 +256,21 @@ def run_kmeans_typology(ds, n_clusters: int = 4) -> dict:
     }
 
 
+def _attach_population_stats(stats: dict, charts: dict) -> None:
+    """
+    Surface total_population/population_affected from the severity_distribution
+    chart (see cdi_runner.build_drought_charts) into stats. Population fetch is
+    best-effort — its absence must not break the rest of the result, so this
+    is a no-op in that case.
+    """
+    severity = charts.get("severity_distribution", {})
+    total_population = severity.get("total_population")
+    if total_population is None:
+        return
+    stats["total_population"] = total_population
+    stats["population_affected"] = severity.get("population_affected")
+
+
 def drought_severity_stats(latest_cdi: np.ndarray) -> dict:
     """
     Summarise the most recent CDI raster into a mean value and the percentage
@@ -371,6 +386,7 @@ class DroughtModel:
             "lstm_best_val_mse": train_history["best_val_mse"],
             "stopped_epoch": train_history["stopped_epoch"],
         }
+        _attach_population_stats(stats, charts)
         return {"stats": stats, "charts": charts}
 
     # ── drought_monitoring path ───────────────────────────────────────────────
@@ -412,4 +428,5 @@ class DroughtModel:
             "mean_cdi": round(float(df["CDI"].mean()), 4),
             **severity_stats,
         }
+        _attach_population_stats(stats, charts)
         return {"stats": stats, "charts": charts}

@@ -17,10 +17,12 @@ from climate_change.core.base_use_case import (
 _log = logging.getLogger(__name__)
 from climate_change.core.dask_engine import DaskEngine
 from climate_change.core.gee_auth import ensure_gee
+from climate_change.core.population import at_risk_population
 from climate_change.core.runner import register_module
 
 from .cog_export import export_degradation_cog
 from .features import (
+    DEGRADATION_CLASSES,
     build_feature_datasets,
     build_gee_feature_stack,
     fetch_ndvi_timeseries,
@@ -28,8 +30,19 @@ from .features import (
 )
 from .model import LandDegradationModel
 
+# Land degradation is binary (no separate medium/high tier) — "at risk" is
+# population in the single "Degraded" class, the natural equivalent of
+# medium+high for a 2-class domain.
+LAND_DEGRADATION_AT_RISK_LABELS = ["Degraded"]
 
-def _apply_raster_risk_pct(result: dict, risk_pct: list[float], risk_ha: list[float]) -> None:
+
+def _apply_raster_risk_pct(
+    result: dict,
+    risk_pct: list[float],
+    risk_ha: list[float],
+    population_by_class: dict[str, float] | None = None,
+    total_population: float | None = None,
+) -> None:
     """
     Overwrite the test-split-based risk distribution with percentages/hectares
     computed from the full-AOI raster (every pixel actually painted on the
@@ -38,11 +51,22 @@ def _apply_raster_risk_pct(result: dict, risk_pct: list[float], risk_ha: list[fl
     raster, which is what the frontend's degradation chart should describe.
 
     risk_pct/risk_ha are [not_degraded, degraded], matching DEGRADATION_CLASSES order.
+    population_by_class/total_population are best-effort (may be None — see
+    core.population.fetch_population_count_safe) and are simply omitted if absent.
     """
     risk_dist = result.get("charts", {}).get("riskDist")
     if risk_dist is not None:
         risk_dist["data"] = risk_pct
         risk_dist["data_ha"] = risk_ha
+        if population_by_class:
+            risk_dist["data_population"] = [
+                population_by_class.get(label, 0.0) for label in DEGRADATION_CLASSES
+            ]
+    if total_population is not None:
+        result["stats"]["total_population"] = total_population
+        result["stats"]["population_affected"] = at_risk_population(
+            population_by_class or {}, LAND_DEGRADATION_AT_RISK_LABELS
+        )
 
 
 class LandDegradationUseCase(BaseUseCase):
@@ -105,7 +129,13 @@ class LandDegradationUseCase(BaseUseCase):
                 scale=int(dict_config.get("scale", 1000)),
             )
             raster_paths = {"degradation_risk": raster_result["degradation_risk"]}
-            _apply_raster_risk_pct(result, raster_result["risk_pct"], raster_result["risk_ha"])
+            _apply_raster_risk_pct(
+                result,
+                raster_result["risk_pct"],
+                raster_result["risk_ha"],
+                raster_result.get("population_by_class"),
+                raster_result.get("total_population"),
+            )
         except Exception as exc:
             raster_error = str(exc)
 
@@ -231,7 +261,13 @@ class LandDegradationUseCase(BaseUseCase):
                 scale=int(config.get("scale", 1000)),
             )
             cog_paths = {"degradation_risk": raster_result["degradation_risk"]}
-            _apply_raster_risk_pct(result, raster_result["risk_pct"], raster_result["risk_ha"])
+            _apply_raster_risk_pct(
+                result,
+                raster_result["risk_pct"],
+                raster_result["risk_ha"],
+                raster_result.get("population_by_class"),
+                raster_result.get("total_population"),
+            )
         except Exception as exc:
             _log.warning("Land degradation COG export failed: %s", exc, exc_info=True)
             cog_error = str(exc)

@@ -153,39 +153,26 @@ class DroughtUseCase(BaseUseCase):
         return result
 
     def run_date_ranges(self, config: dict, date_ranges: list[dict]) -> list[dict]:
-        """Run the same AOI over multiple date ranges in parallel (TWO_DATE mode)."""
-        merged = [{**config, **dr} for dr in date_ranges]
-        return self._run_parallel(merged)
+        """Not supported — drought is single-area only. See UseCaseInfo.single_area_only."""
+        raise ValueError(
+            "Drought analysis only supports a single AOI/date-range at a time. "
+            "Its GEE access goes through xee (xarray-Earth-Engine), whose lazy "
+            "computation graph requires a forced synchronous Dask scheduler "
+            "(see _run_cdi_pipeline_local) that doesn't survive being dispatched "
+            "to a remote worker — the two-date-range comparison and multi-region "
+            "batch modes are disabled for this module rather than run unreliably."
+        )
 
     def run_multi_regions(self, configs: list[dict]) -> list[dict]:
-        """Run multiple AOI configs in parallel (MULTI_REGION mode)."""
-        return self._run_parallel(configs)
-
-    # ── Internal helpers ────────────────────────────────────────────────────
-
-    def _run_parallel(self, configs: list[dict]) -> list[dict]:
-        """Run each config on a separate Dask worker for distributed execution."""
-        import traceback
-
-        from dask.distributed import as_completed as dask_as_completed
-
-        from climate_change.core.dask_engine import DaskEngine
-
-        client = DaskEngine.get_client()
-        n = len(configs)
-        results: list[dict | None] = [None] * n
-        idx_map = {client.submit(self.run, cfg, pure=False): i for i, cfg in enumerate(configs)}
-        for future in dask_as_completed(idx_map):
-            idx = idx_map[future]
-            try:
-                results[idx] = future.result()
-            except Exception as exc:
-                results[idx] = {
-                    "error": str(exc),
-                    "traceback": traceback.format_exc(),
-                    "config": configs[idx],
-                }
-        return results  # type: ignore[return-value]
+        """Not supported — drought is single-area only. See UseCaseInfo.single_area_only."""
+        raise ValueError(
+            "Drought analysis only supports a single AOI/date-range at a time. "
+            "Its GEE access goes through xee (xarray-Earth-Engine), whose lazy "
+            "computation graph requires a forced synchronous Dask scheduler "
+            "(see _run_cdi_pipeline_local) that doesn't survive being dispatched "
+            "to a remote worker — the two-date-range comparison and multi-region "
+            "batch modes are disabled for this module rather than run unreliably."
+        )
 
     @staticmethod
     def _fetch_from_dict(config: dict) -> dict:

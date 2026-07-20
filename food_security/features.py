@@ -284,6 +284,7 @@ def build_feature_datasets(aoi: ee.Geometry, config: dict) -> dict[str, xr.Datas
     Returns a dict keyed by band group name, consumed by cog_export.
     """
     from climate_change.core.dask_engine import DaskEngine
+    from climate_change.core.population import fetch_population_count_safe
 
     scale = config.get("scale", 1000)
     study_start = config.get("start_date", "2018-01-01")
@@ -301,6 +302,10 @@ def build_feature_datasets(aoi: ee.Geometry, config: dict) -> dict[str, xr.Datas
             "mndwi": lambda: fetch_mndwi(aoi, s2_start, study_end, scale=scale),
             "terrain": lambda: fetch_terrain_slope(aoi, scale=scale),
             "landcover": lambda: fetch_landcover(aoi, scale=scale),
+            # Raw population COUNT for exposure reporting (population within
+            # medium/high food-insecurity risk zones). Best-effort — see
+            # core.population.fetch_population_count_safe.
+            "population_count": lambda: fetch_population_count_safe(aoi, scale=scale),
         }
     )
 
@@ -607,8 +612,16 @@ def align_datasets(
     method_categorical: InterpOptions = "nearest",
 ) -> dict[str, xr.Dataset]:
     """
-    Interpolate all datasets onto the VCI/TCI reference grid.
-    Land cover is treated as categorical (nearest-neighbour).
+    Interpolate all datasets onto the VCI/TCI reference grid. Land cover is
+    treated as categorical (nearest-neighbour). population_count is passed
+    through entirely unchanged, at its own native ~100 m resolution — it is
+    never interpolated onto this (coarser) reference grid. Summing
+    population within a risk zone requires the opposite: upsampling the
+    (categorical) classification onto population's native grid — see
+    core.population.population_exposure, which cog_export.py uses for this
+    instead of relying on align_datasets. Interpolating population here
+    would silently corrupt totals (verified against live GEE data — see
+    core.population.fetch_population_count's docstring).
 
     Each dataset is chunked before interpolation so that xarray produces
     Dask-backed lazy arrays; dask.compute() then materialises them all
@@ -621,11 +634,15 @@ def align_datasets(
 
     lazy: dict[str, xr.Dataset] = {ref_key: ref}
     for key, ds in datasets.items():
-        if key == ref_key:
+        if key == ref_key or ds is None or key == "population_count":
             continue
         method = method_categorical if key == "landcover" else method_continuous
         lazy[key] = ds.chunk(_CHUNK).interp(lat=ref.lat, lon=ref.lon, method=method)
 
     keys = list(lazy)
     computed = compute(*[lazy[k] for k in keys])
-    return dict(zip(keys, computed))
+    result = dict(zip(keys, computed))
+    pop_ds = datasets.get("population_count")
+    if pop_ds is not None:
+        result["population_count"] = pop_ds
+    return result

@@ -1413,10 +1413,23 @@ class ReportBuilder:
             )
         story.append(Spacer(1, 0.4 * cm))
 
-        # 7. Annual Anomaly
+        # 7. Population Exposure
+        severity = charts.get("severity_distribution", {})
+        self._add_population_section(
+            story,
+            section_num=7,
+            figure_num=5,
+            classification_label="latest CDI severity",
+            stats=output.stats or {},
+            chart=severity,
+            at_risk_labels=["Extreme drought", "Severe drought"],
+            chart_title="Population exposed by drought-severity class",
+        )
+
+        # 8. Annual Anomaly
         if charts.get("anomaly", {}).get("data"):
             self._add_rule(story)
-            story.append(Paragraph("7. Annual CDI Anomaly", S["section_heading"]))
+            story.append(Paragraph("8. Annual CDI Anomaly", S["section_heading"]))
             story.append(
                 Paragraph(
                     "Green bars indicate above-baseline (wetter) years; red bars indicate below-baseline (drier) years.",
@@ -1428,26 +1441,26 @@ class ReportBuilder:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        "Figure 5. Annual CDI anomaly relative to long-term mean.",
+                        "Figure 6. Annual CDI anomaly relative to long-term mean.",
                         S["caption"],
                     )
                 )
             story.append(Spacer(1, 0.4 * cm))
 
-        # 8. Seasonal Pattern
+        # 9. Seasonal Pattern
         if charts.get("seasonal", {}).get("data"):
             self._add_rule(story)
-            story.append(Paragraph("8. Seasonal CDI Pattern", S["section_heading"]))
+            story.append(Paragraph("9. Seasonal CDI Pattern", S["section_heading"]))
             img = self._chart_seasonal(charts)
             if img:
                 story.append(img)
-                story.append(Paragraph("Figure 6. Climatological monthly mean CDI.", S["caption"]))
+                story.append(Paragraph("Figure 7. Climatological monthly mean CDI.", S["caption"]))
             story.append(Spacer(1, 0.4 * cm))
 
-        # 9. Drought Typology
+        # 10. Drought Typology
         if charts.get("typology", {}).get("label_map"):
             self._add_rule(story)
-            story.append(Paragraph("9. Spatial Drought Typology", S["section_heading"]))
+            story.append(Paragraph("10. Spatial Drought Typology", S["section_heading"]))
             story.append(
                 Paragraph(
                     "KMeans clustering of pixel CDI trajectories identifies spatially coherent drought typologies. "
@@ -1460,22 +1473,22 @@ class ReportBuilder:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        "Figure 7. Left: typology cluster map. Right: mean CDI per cluster (label = % of pixels).",
+                        "Figure 8. Left: typology cluster map. Right: mean CDI per cluster (label = % of pixels).",
                         S["caption"],
                     )
                 )
             story.append(Spacer(1, 0.4 * cm))
 
-        # 10. LSTM Training History
+        # 11. LSTM Training History
         if charts.get("training", {}).get("train_losses"):
             self._add_rule(story)
-            story.append(Paragraph("10. LSTM Training History", S["section_heading"]))
+            story.append(Paragraph("11. LSTM Training History", S["section_heading"]))
             img = self._chart_training(charts)
             if img:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        "Figure 8. Train vs. validation MSE loss per epoch.",
+                        "Figure 9. Train vs. validation MSE loss per epoch.",
                         S["caption"],
                     )
                 )
@@ -1549,6 +1562,118 @@ class ReportBuilder:
         ax2.set_title("Proportions", fontsize=11)
         plt.tight_layout()
         return self._fig_to_image(fig)
+
+    def _chart_population_dist(
+        self, labels: list, data_population: list, bar_colors: list, title: str
+    ) -> Image | None:
+        if not labels or not data_population:
+            return None
+        fig, ax = plt.subplots(figsize=(10, 4))
+        bars = ax.bar(
+            labels,
+            data_population,
+            color=bar_colors or None,
+            edgecolor="white",
+            linewidth=0.5,
+        )
+        for bar, pop in zip(bars, data_population):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height(),
+                f"{pop:,.0f}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
+        ax.set_ylabel("Population")
+        ax.set_title(title, fontsize=11)
+        ax.tick_params(axis="x", rotation=15)
+        plt.tight_layout()
+        return self._fig_to_image(fig, width_cm=13)
+
+    def _add_population_section(
+        self,
+        story: list,
+        section_num: int,
+        figure_num: int,
+        classification_label: str,
+        stats: dict,
+        chart: dict,
+        at_risk_labels: list[str],
+        chart_title: str,
+    ) -> None:
+        """
+        Shared 'Population Exposure' section for disease / flood / food_security /
+        land_degradation / drought. `chart` is the domain's risk-class chart dict
+        (riskDist / risk_distribution / severity_distribution), onto which
+        core.population attaches data_population/total_population/
+        population_affected best-effort — omitted entirely if WorldPop couldn't
+        be fetched for this AOI/year, same as the notebooks' handling.
+        """
+        total_population = stats.get("total_population")
+        if total_population is None:
+            return
+        S = self._styles
+        self._add_rule(story)
+        story.append(Paragraph(f"{section_num}. Population Exposure", S["section_heading"]))
+        story.append(
+            Paragraph(
+                "Population figures are a raster zonal sum of WorldPop gridded population "
+                f"against the {classification_label} classification — not an area-weighted "
+                "estimate — so density variation within the AOI is captured directly rather "
+                "than assumed uniform.",
+                S["body"],
+            )
+        )
+        population_affected = stats.get("population_affected", 0.0)
+        pct = (population_affected / total_population * 100) if total_population else 0.0
+        rows = [
+            ["Metric", "Value"],
+            ["Total population in AOI", f"{total_population:,.0f}"],
+            [
+                f"Population in {' + '.join(at_risk_labels)}",
+                f"{population_affected:,.0f} ({pct:.1f}%)",
+            ],
+        ]
+        tbl = Table(rows, colWidths=[9 * cm, 6 * cm])
+        tbl.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), TEAL),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT_GREY]),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("GRID", (0, 0), (-1, -1), 0.4, MID_GREY),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        story.append(tbl)
+        story.append(Spacer(1, 0.2 * cm))
+
+        pop_data = chart.get("data_population")
+        if pop_data:
+            img = self._chart_population_dist(
+                chart.get("labels", []), pop_data, chart.get("colors", []), chart_title
+            )
+            if img:
+                story.append(img)
+                story.append(
+                    Paragraph(
+                        f"Figure {figure_num}. Population exposed per class.",
+                        S["caption"],
+                    )
+                )
+        self._interpret(
+            story,
+            f"{population_affected:,.0f} people ({pct:.1f}% of the AOI's population) fall within "
+            f"{' / '.join(at_risk_labels)} — a raster zonal sum of WorldPop population against "
+            "the risk classification, reflecting the true concentration of people rather than "
+            "assuming uniform density across the AOI.",
+        )
+        story.append(Spacer(1, 0.2 * cm))
 
     def _chart_timeseries_multi(self, ts_data: dict, title: str) -> Image | None:
         datasets = ts_data.get("datasets", [])
@@ -1925,17 +2050,29 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 5. Monthly Environmental Indicators
+        # 5. Population Exposure
+        self._add_population_section(
+            story,
+            section_num=5,
+            figure_num=3,
+            classification_label="disease-risk",
+            stats=stats,
+            chart=rd,
+            at_risk_labels=["Medium Risk", "High Risk"],
+            chart_title="Population exposed by disease-risk class",
+        )
+
+        # 6. Monthly Environmental Indicators
         ts = charts.get("timeSeries", {})
         if ts.get("datasets"):
             self._add_rule(story)
-            story.append(Paragraph("5. Monthly Environmental Indicators", S["section_heading"]))
+            story.append(Paragraph("6. Monthly Environmental Indicators", S["section_heading"]))
             img = self._chart_timeseries_multi(ts, "Monthly NDVI / Rainfall / LST")
             if img:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        "Figure 3. Monthly NDVI, rainfall, and land surface temperature.",
+                        "Figure 4. Monthly NDVI, rainfall, and land surface temperature.",
                         S["caption"],
                     )
                 )
@@ -1950,11 +2087,11 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 6. SHAP Feature Importance
+        # 7. SHAP Feature Importance
         shap_data = charts.get("shap", {})
         if shap_data.get("features"):
             self._add_rule(story)
-            story.append(Paragraph("6. SHAP Feature Importance", S["section_heading"]))
+            story.append(Paragraph("7. SHAP Feature Importance", S["section_heading"]))
             story.append(
                 Paragraph(
                     "Mean absolute SHAP values from XGBoost TreeExplainer averaged across all risk classes.",
@@ -1969,7 +2106,7 @@ class ReportBuilder:
             )
             if img:
                 story.append(img)
-                story.append(Paragraph(f"Figure 4. Top risk driver: {features[0]}.", S["caption"]))
+                story.append(Paragraph(f"Figure 5. Top risk driver: {features[0]}.", S["caption"]))
             self._interpret(
                 story,
                 f"The primary driver of disease risk is '{features[0]}' "
@@ -1981,17 +2118,17 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 7. Model Performance
+        # 8. Model Performance
         perf = charts.get("model_performance", {})
         if perf:
             self._add_rule(story)
-            story.append(Paragraph("7. Model Performance Comparison", S["section_heading"]))
+            story.append(Paragraph("8. Model Performance Comparison", S["section_heading"]))
             img = self._chart_model_perf(perf, [("f1", "F1-macro"), ("accuracy", "Accuracy")])
             if img:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        "Figure 5. GBM, XGBoost, and ensemble F1 (macro) and accuracy on held-out test set.",
+                        "Figure 6. GBM, XGBoost, and ensemble F1 (macro) and accuracy on held-out test set.",
                         S["caption"],
                     )
                 )
@@ -2008,11 +2145,11 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 8. Hotspot cluster summary table
+        # 9. Hotspot cluster summary table
         n_clusters = stats.get("n_hotspot_clusters")
         if n_clusters is not None:
             self._add_rule(story)
-            story.append(Paragraph("8. DBSCAN Hotspot Cluster Summary", S["section_heading"]))
+            story.append(Paragraph("9. DBSCAN Hotspot Cluster Summary", S["section_heading"]))
             hotspot_rows: list[list[str]] = [["Metric", "Value"]]
             hotspot_rows.append(["Number of hotspot clusters", str(n_clusters)])
             if stats.get("hotspot_population") is not None:
@@ -2189,17 +2326,29 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 6. Monthly NDVI and Rainfall Time Series
+        # 6. Population Exposure
+        self._add_population_section(
+            story,
+            section_num=6,
+            figure_num=4,
+            classification_label="food-security risk",
+            stats=stats,
+            chart=rd,
+            at_risk_labels=["Medium Risk", "High Risk"],
+            chart_title="Population exposed by food-security risk class",
+        )
+
+        # 7. Monthly NDVI and Rainfall Time Series
         ts = charts.get("timeSeries", {})
         if ts.get("datasets"):
             self._add_rule(story)
-            story.append(Paragraph("6. Monthly NDVI and Rainfall", S["section_heading"]))
+            story.append(Paragraph("7. Monthly NDVI and Rainfall", S["section_heading"]))
             img = self._chart_timeseries_multi(ts, "Monthly NDVI and Rainfall")
             if img:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        "Figure 4. Monthly area-mean NDVI (MODIS) and cumulative rainfall (CHIRPS) "
+                        "Figure 5. Monthly area-mean NDVI (MODIS) and cumulative rainfall (CHIRPS) "
                         "over the study period.",
                         S["caption"],
                     )
@@ -2215,11 +2364,11 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 7. SHAP Feature Importance
+        # 8. SHAP Feature Importance
         shap_data = charts.get("shap", {})
         if shap_data.get("features"):
             self._add_rule(story)
-            story.append(Paragraph("7. SHAP Feature Importance", S["section_heading"]))
+            story.append(Paragraph("8. SHAP Feature Importance", S["section_heading"]))
             story.append(
                 Paragraph(
                     "Mean absolute SHAP values from XGBoost TreeExplainer, averaged across all three "
@@ -2236,7 +2385,7 @@ class ReportBuilder:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        f"Figure 5. Top food security driver: '{features[0]}' "
+                        f"Figure 6. Top food security driver: '{features[0]}' "
                         f"(mean |SHAP| = {values[0]:.4f}).",
                         S["caption"],
                     )
@@ -2252,17 +2401,17 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 8. Model Performance
+        # 9. Model Performance
         perf = charts.get("model_performance", {})
         if perf:
             self._add_rule(story)
-            story.append(Paragraph("8. Model Performance Comparison", S["section_heading"]))
+            story.append(Paragraph("9. Model Performance Comparison", S["section_heading"]))
             img = self._chart_model_perf(perf, [("f1", "F1-macro"), ("accuracy", "Accuracy")])
             if img:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        "Figure 6. Random Forest, XGBoost, and ensemble F1-macro and accuracy "
+                        "Figure 7. Random Forest, XGBoost, and ensemble F1-macro and accuracy "
                         "on the held-out test set (20% stratified split).",
                         S["caption"],
                     )
@@ -2336,11 +2485,23 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 5. SHAP Feature Importance
+        # 5. Population Exposure
+        self._add_population_section(
+            story,
+            section_num=5,
+            figure_num=3,
+            classification_label="flood-risk",
+            stats=stats,
+            chart=rd,
+            at_risk_labels=["Medium", "High", "Very High"],
+            chart_title="Population exposed by flood-risk class",
+        )
+
+        # 6. SHAP Feature Importance
         shap_data = charts.get("shap", {})
         if shap_data.get("features"):
             self._add_rule(story)
-            story.append(Paragraph("5. SHAP Feature Importance", S["section_heading"]))
+            story.append(Paragraph("6. SHAP Feature Importance", S["section_heading"]))
             story.append(
                 Paragraph(
                     "TreeExplainer SHAP values computed on the XGBoost model. "
@@ -2356,7 +2517,7 @@ class ReportBuilder:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        f"Figure 3. Top flood driver: '{features[0]}' (mean |SHAP| = {values[0]:.4f}).",
+                        f"Figure 4. Top flood driver: '{features[0]}' (mean |SHAP| = {values[0]:.4f}).",
                         S["caption"],
                     )
                 )
@@ -2377,17 +2538,17 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 6. Model Performance
+        # 7. Model Performance
         perf = charts.get("model_performance", {})
         if perf:
             self._add_rule(story)
-            story.append(Paragraph("6. Model Performance Comparison", S["section_heading"]))
+            story.append(Paragraph("7. Model Performance Comparison", S["section_heading"]))
             img = self._chart_model_perf(perf, [("f1", "F1"), ("auc", "AUC-ROC")])
             if img:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        "Figure 4. RF, XGBoost, and ensemble F1 and AUC-ROC on the held-out test set.",
+                        "Figure 5. RF, XGBoost, and ensemble F1 and AUC-ROC on the held-out test set.",
                         S["caption"],
                     )
                 )
@@ -2409,11 +2570,11 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 7. Model Uncertainty
+        # 8. Model Uncertainty
         uncertainty = charts.get("uncertainty", {})
         if uncertainty.get("spread_stats"):
             self._add_rule(story)
-            story.append(Paragraph("7. Model Uncertainty (Epistemic)", S["section_heading"]))
+            story.append(Paragraph("8. Model Uncertainty (Epistemic)", S["section_heading"]))
             story.append(
                 Paragraph(
                     "Uncertainty is estimated from the absolute spread between RF and XGBoost flood "
@@ -2429,7 +2590,7 @@ class ReportBuilder:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        f"Figure 5. RF–XGBoost probability spread statistics. "
+                        f"Figure 6. RF–XGBoost probability spread statistics. "
                         f"{high_pct_unc:.1f}% of pixels exceed the 0.20 threshold.",
                         S["caption"],
                     )
@@ -2445,11 +2606,11 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 8. Key Flood Statistics table
+        # 9. Key Flood Statistics table
         flooded_pct = stats.get("flooded_pct")
         if flooded_pct is not None:
             self._add_rule(story)
-            story.append(Paragraph("8. Key Flood Statistics", S["section_heading"]))
+            story.append(Paragraph("9. Key Flood Statistics", S["section_heading"]))
             rows = [["Metric", "Value"]]
             for key, label in [
                 ("flooded_pct", "Flooded pixels — JRC label (%)"),
@@ -2545,12 +2706,24 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 5. Annual NDVI Trend
+        # 5. Population Exposure
+        self._add_population_section(
+            story,
+            section_num=5,
+            figure_num=3,
+            classification_label="land-degradation",
+            stats=stats,
+            chart=rd,
+            at_risk_labels=["Degraded"],
+            chart_title="Population exposed by land-degradation class",
+        )
+
+        # 6. Annual NDVI Trend
         ts = charts.get("timeSeries", {})
         trend = charts.get("trend", {})
         if ts.get("datasets"):
             self._add_rule(story)
-            story.append(Paragraph("5. Annual NDVI Trend", S["section_heading"]))
+            story.append(Paragraph("6. Annual NDVI Trend", S["section_heading"]))
             slope = trend.get("ndvi_trend_per_year") or stats.get("ndvi_trend_per_year")
             mk_sig = trend.get("mk_significant") or stats.get("mk_significant")
             r2 = trend.get("ndvi_trend_r2") or stats.get("ndvi_trend_r2")
@@ -2571,7 +2744,7 @@ class ReportBuilder:
             if img:
                 story.append(img)
                 bkps = trend.get("breakpoint_years") or stats.get("breakpoint_years", [])
-                caption = "Figure 3. Annual NDVI with OLS trend line"
+                caption = "Figure 4. Annual NDVI with OLS trend line"
                 if bkps:
                     caption += f" and breakpoint(s) at {', '.join(str(y) for y in bkps)}"
                 story.append(Paragraph(caption + ".", S["caption"]))
@@ -2598,11 +2771,11 @@ class ReportBuilder:
                 )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 6. SHAP Feature Importance
+        # 7. SHAP Feature Importance
         shap_data = charts.get("shap", {})
         if shap_data.get("features"):
             self._add_rule(story)
-            story.append(Paragraph("6. SHAP Feature Importance", S["section_heading"]))
+            story.append(Paragraph("7. SHAP Feature Importance", S["section_heading"]))
             story.append(
                 Paragraph(
                     "Mean absolute SHAP values from TreeExplainer on the best-performing model. "
@@ -2619,7 +2792,7 @@ class ReportBuilder:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        f"Figure 4. Top degradation driver: '{features[0]}' "
+                        f"Figure 5. Top degradation driver: '{features[0]}' "
                         f"(mean |SHAP| = {values[0]:.4f}).",
                         S["caption"],
                     )
@@ -2636,17 +2809,17 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 7. Model Performance
+        # 8. Model Performance
         perf = charts.get("model_performance", {}) if "model_performance" in charts else {}
         if perf:
             self._add_rule(story)
-            story.append(Paragraph("7. Model Performance Comparison", S["section_heading"]))
+            story.append(Paragraph("8. Model Performance Comparison", S["section_heading"]))
             img = self._chart_model_perf(perf, [("f1", "F1-weighted"), ("accuracy", "Accuracy")])
             if img:
                 story.append(img)
                 story.append(
                     Paragraph(
-                        "Figure 5. RF, LightGBM, and ensemble weighted F1 and accuracy "
+                        "Figure 6. RF, LightGBM, and ensemble weighted F1 and accuracy "
                         "on the held-out test set.",
                         S["caption"],
                     )
@@ -2664,10 +2837,10 @@ class ReportBuilder:
             )
             story.append(Spacer(1, 0.2 * cm))
 
-        # 8. NDVI Trend Statistics table
+        # 9. NDVI Trend Statistics table
         if trend or stats.get("ndvi_trend_per_year") is not None:
             self._add_rule(story)
-            story.append(Paragraph("8. NDVI Trend Statistics", S["section_heading"]))
+            story.append(Paragraph("9. NDVI Trend Statistics", S["section_heading"]))
             src = trend if trend else stats
             trend_rows = [["Statistic", "Value"]]
             for key, label in [

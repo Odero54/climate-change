@@ -48,6 +48,14 @@ class TestUseCaseRegistry:
     def test_flood_has_risk_class_in_dependent_variable(self):
         assert "risk" in USE_CASE_REGISTRY["flood"].dependent_variable.lower()
 
+    def test_drought_and_flood_are_single_area_only(self):
+        assert USE_CASE_REGISTRY["drought"].single_area_only is True
+        assert USE_CASE_REGISTRY["flood"].single_area_only is True
+
+    def test_other_modules_support_multi_config_modes(self):
+        for module_id in ("food_security", "disease", "land_degradation"):
+            assert USE_CASE_REGISTRY[module_id].single_area_only is False
+
 
 class TestModelOption:
     def test_fields_stored(self):

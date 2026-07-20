@@ -132,6 +132,39 @@ reads, suitable for direct use in web maps. Each module's `cog_export.py`
 handles this (e.g. [`export_disease_cog`](api/disease.md)); the resulting
 path(s) populate `AnalysisOutput.raster_path`.
 
+## Population exposure
+
+Area-based risk (`risk_pct`, `area_ha`) doesn't tell you how many people are
+actually affected — a polygon that's 63% high flood risk could be empty
+rangeland or a market town. [`core.population`](api/core.md) turns each
+module's risk-classified grid into a headcount by taking a **raster zonal
+sum** of WorldPop gridded population (`WorldPop/GP/100m/pop`, people per
+pixel — an additive count, not a density) against the classification, per
+class.
+
+Two things make this correct rather than merely plausible:
+
+- **Population is never downsampled.** WorldPop is always fetched at its
+  native ~100 m resolution; a coarser risk grid is *upsampled* onto
+  population's grid via nearest-neighbour (`upsample_class_grid`) — the
+  semantically correct direction for a categorical grid — instead of
+  aggregating population server-side, which was verified against live GEE
+  data to silently under/over-count by tens of percent.
+- **It isn't an area-weighted estimate.** Unlike `_attach_risk_area`, which
+  assumes uniform density within a class share, `population_exposure()`
+  sums real gridded population per pixel, so it reflects actual
+  concentration of people, not an assumption.
+
+Each module attaches `stats["total_population"]` and
+`stats["population_affected"]` (population within that module's at-risk
+classes — e.g. Medium + High for disease/food security, Degraded for land
+degradation, Extreme + Severe drought for drought) plus a parallel
+`data_population` array on the risk-distribution chart. All of it is
+best-effort: `fetch_population_count_safe` returns `None` on any failure
+(no WorldPop coverage, network error), and downstream code simply omits
+these fields rather than failing the analysis — see
+[`core.population`](api/core.md#population-exposure).
+
 ## Caching
 
 Two independent cache layers exist, for different lifetimes:

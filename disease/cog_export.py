@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import Booster, DMatrix
 
 from climate_change.core.landcover_mask import WATER_CLASS
+from climate_change.core.population import population_exposure
 
 from .features import FEATURE_COLS, align_datasets
 from .model import pad_gbm_proba
@@ -23,6 +24,8 @@ _log = logging.getLogger(__name__)
 class DiseaseCogResult(TypedDict):
     disease_risk: str
     risk_pct: list[float]
+    population_by_class: dict[str, float]
+    total_population: float | None
 
 
 # fetch_landcover() normalises ESA WorldCover class codes to [0, 1] (code / 100)
@@ -121,6 +124,14 @@ def export_disease_cog(
         )
         risk_grid[~inside_aoi] = 0
 
+    population_by_class: dict[str, float] = {}
+    total_population: float | None = None
+    pop_ds = aligned.get("population_count")
+    if pop_ds is not None:
+        by_int = population_exposure(risk_grid, transform, pop_ds, classes=[1, 2, 3])
+        population_by_class = {RISK_INT[v]: by_int[str(v)] for v in (1, 2, 3)}
+        total_population = round(sum(population_by_class.values()), 1)
+
     with rasterio.open(
         cog_path,
         "w",
@@ -146,4 +157,9 @@ def export_disease_cog(
     n_valid = class_counts.sum()
     risk_pct = (class_counts / n_valid * 100).round(1).tolist() if n_valid > 0 else [0.0, 0.0, 0.0]
 
-    return {"disease_risk": str(cog_path), "risk_pct": risk_pct}
+    return {
+        "disease_risk": str(cog_path),
+        "risk_pct": risk_pct,
+        "population_by_class": population_by_class,
+        "total_population": total_population,
+    }

@@ -1,29 +1,47 @@
 from __future__ import annotations
 
 import os
-import traceback
-
-from dask.distributed import as_completed as dask_as_completed
 
 from climate_change.core.base_use_case import (
     AnalysisConfig,
     AnalysisOutput,
     BaseUseCase,
     _aoi_area_ha,
+    _attach_population,
     _attach_risk_area,
     _ee_geometry_from_geojson,
     _lons_lats,
 )
 from climate_change.core.dask_engine import DaskEngine
 from climate_change.core.gee_auth import ensure_gee
+from climate_change.core.population import at_risk_population
 from climate_change.core.runner import register_module
 
-from .cog_export import export_flood_cog, flood_raster_distribution
+from .cog_export import FloodCogResult, export_flood_cog, flood_raster_distribution
 from .features import (
     build_feature_datasets,
     sample_training_data,
 )
 from .model import FloodModel
+
+FLOOD_AT_RISK_LABELS = ["Medium", "High", "Very High"]
+
+
+def _attach_population_stats(
+    result: dict, raster_result: FloodCogResult | None, label_order: list[str]
+) -> None:
+    """
+    Attach population-exposure stats/chart data from export_flood_cog's
+    raster_result, if population data was available. Population fetch is
+    best-effort (core.population.fetch_population_count_safe) — its absence
+    must not break the rest of the result, so this is a no-op in that case.
+    """
+    if not raster_result or raster_result.get("total_population") is None:
+        return
+    pop_by_class = raster_result["population_by_class"]
+    result["stats"]["total_population"] = raster_result["total_population"]
+    result["stats"]["population_affected"] = at_risk_population(pop_by_class, FLOOD_AT_RISK_LABELS)
+    _attach_population(result["charts"]["risk_distribution"], pop_by_class, label_order)
 
 
 class FloodRiskUseCase(BaseUseCase):
@@ -84,8 +102,9 @@ class FloodRiskUseCase(BaseUseCase):
         result = self._run_model_dict(features, dict_config)
         raster_paths: dict[str, str] | None = None
         raster_error: str | None = None
+        raster_result: FloodCogResult | None = None
         try:
-            raster_paths = export_flood_cog(
+            raster_result = export_flood_cog(
                 rf_model=features["_rf"],
                 xgb_model=features["_xgb"],
                 datasets=features["datasets"],
@@ -94,6 +113,7 @@ class FloodRiskUseCase(BaseUseCase):
                 model_type=model_type,
                 aoi_geojson=config.aoi_geojson,
             )
+            raster_paths = {"flood_risk": raster_result["flood_risk"]}
         except Exception as exc:
             raster_error = str(exc)
 
@@ -132,6 +152,7 @@ class FloodRiskUseCase(BaseUseCase):
             if total_area_ha:
                 result["stats"]["total_area_ha"] = round(total_area_ha, 1)
                 _attach_risk_area(result["charts"]["risk_distribution"], total_area_ha)
+            _attach_population_stats(result, raster_result, labels)
 
         geojson_features = []
         if config.aoi_geojson:
@@ -252,8 +273,9 @@ class FloodRiskUseCase(BaseUseCase):
         model_type = config.get("model_type", "ensemble")
         raster_paths: dict[str, str] | None = None
         raster_error: str | None = None
+        raster_result: FloodCogResult | None = None
         try:
-            raster_paths = export_flood_cog(
+            raster_result = export_flood_cog(
                 rf_model=features["_rf"],
                 xgb_model=features["_xgb"],
                 datasets=features["datasets"],
@@ -262,6 +284,7 @@ class FloodRiskUseCase(BaseUseCase):
                 model_type=model_type,
                 aoi_geojson=config.get("aoi_geojson"),
             )
+            raster_paths = {"flood_risk": raster_result["flood_risk"]}
         except Exception as exc:
             raster_error = str(exc)
 
@@ -311,40 +334,32 @@ class FloodRiskUseCase(BaseUseCase):
             if total_area_ha:
                 result["stats"]["total_area_ha"] = round(total_area_ha, 1)
                 _attach_risk_area(result["charts"]["risk_distribution"], total_area_ha)
+            _attach_population_stats(result, raster_result, labels)
         return result
 
     def run_date_ranges(self, config: dict, date_ranges: list[dict]) -> list[dict]:
-        """Run the same AOI over two (or more) date-range configurations in parallel."""
-        merged = [{**config, **dr} for dr in date_ranges]
-        return self._run_parallel(merged)
+        """Not supported — flood is single-area only. See UseCaseInfo.single_area_only."""
+        raise ValueError(
+            "Flood analysis only supports a single AOI/date-range at a time. Each "
+            "run requires six independent satellite date windows (pre/post-flood "
+            "SAR, 7-day and 30-day rainfall, Sentinel-2 MNDWI, JRC flood label) to "
+            "all resolve to non-empty imagery — running many configs in parallel "
+            "multiplies the odds that one window comes up empty, so the "
+            "two-date-range comparison and multi-region batch modes are disabled "
+            "for this module rather than run unreliably."
+        )
 
     def run_multi_regions(self, configs: list[dict]) -> list[dict]:
-        """Run multiple AOI configs (same timeframe, different regions) in parallel."""
-        return self._run_parallel(configs)
-
-    def _run_parallel(self, configs: list[dict]) -> list[dict]:
-        """
-        Run each config on a separate Dask worker for true distributed execution.
-        Each worker calls self.run() which re-initialises GEE via ensure_gee()
-        (skipping the interactive auth step — credentials must be pre-configured).
-        """
-        from climate_change.core.dask_engine import DaskEngine
-
-        client = DaskEngine.get_client()
-        n = len(configs)
-        results: list[dict | None] = [None] * n
-        idx_map = {client.submit(self.run, cfg, pure=False): i for i, cfg in enumerate(configs)}
-        for future in dask_as_completed(idx_map):
-            idx = idx_map[future]
-            try:
-                results[idx] = future.result()
-            except Exception as exc:
-                results[idx] = {
-                    "error": str(exc),
-                    "traceback": traceback.format_exc(),
-                    "config": configs[idx],
-                }
-        return results  # type: ignore[return-value]
+        """Not supported — flood is single-area only. See UseCaseInfo.single_area_only."""
+        raise ValueError(
+            "Flood analysis only supports a single AOI/date-range at a time. Each "
+            "run requires six independent satellite date windows (pre/post-flood "
+            "SAR, 7-day and 30-day rainfall, Sentinel-2 MNDWI, JRC flood label) to "
+            "all resolve to non-empty imagery — running many configs in parallel "
+            "multiplies the odds that one window comes up empty, so the "
+            "two-date-range comparison and multi-region batch modes are disabled "
+            "for this module rather than run unreliably."
+        )
 
 
 register_module("flood", FloodRiskUseCase)

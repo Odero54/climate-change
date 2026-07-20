@@ -37,3 +37,7 @@ together.
 ## Land-cover masking
 
 ::: climate_change.core.landcover_mask
+
+## Population exposure
+
+::: climate_change.core.population

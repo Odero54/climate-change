@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
 import rasterio
@@ -12,6 +13,7 @@ from xgboost import Booster, DMatrix
 
 from climate_change.core.base_use_case import _aoi_geometries
 from climate_change.core.landcover_mask import WATER_CLASS
+from climate_change.core.population import population_exposure
 
 from .features import FEATURE_COLS, RISK_INT, align_datasets
 
@@ -24,6 +26,12 @@ _log = logging.getLogger(__name__)
 RISK_ORDER = ("Very High", "High", "Medium", "Low")
 RISK_VALUE_BY_LABEL = dict(RISK_INT)
 RISK_LABEL_BY_VALUE = {value: label for label, value in RISK_INT.items()}
+
+
+class FloodCogResult(TypedDict):
+    flood_risk: str
+    population_by_class: dict[str, float]
+    total_population: float | None
 
 
 def flood_raster_distribution(path: str | Path) -> dict:
@@ -58,7 +66,7 @@ def export_flood_cog(
     prefix: str,
     model_type: str = "ensemble",
     aoi_geojson: dict | None = None,
-) -> dict[str, str]:
+) -> FloodCogResult:
     """
     Build the full-AOI feature matrix from in-memory xarray Datasets,
     run inference with the selected model, classify into 4 risk classes,
@@ -146,6 +154,16 @@ def export_flood_cog(
         risk_grid[valid_mask] = risk_valid
     risk_grid = risk_grid.reshape(n_lat, n_lon)
 
+    population_by_class: dict[str, float] = {}
+    total_population: float | None = None
+    pop_ds = aligned.get("population_count")
+    if pop_ds is not None:
+        by_int = population_exposure(
+            risk_grid, transform, pop_ds, classes=list(RISK_LABEL_BY_VALUE)
+        )
+        population_by_class = {RISK_LABEL_BY_VALUE[v]: by_int[str(v)] for v in RISK_LABEL_BY_VALUE}
+        total_population = round(sum(population_by_class.values()), 1)
+
     with rasterio.open(
         cog_path,
         "w",
@@ -173,4 +191,8 @@ def export_flood_cog(
         n_lon,
         uncompressed_mb,
     )
-    return {"flood_risk": str(cog_path)}
+    return {
+        "flood_risk": str(cog_path),
+        "population_by_class": population_by_class,
+        "total_population": total_population,
+    }

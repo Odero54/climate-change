@@ -120,6 +120,22 @@ def _attach_risk_area(chart: dict | None, total_area_ha: float | None) -> None:
     chart["data_ha"] = areas
 
 
+def _attach_population(
+    chart: dict | None, pop_by_class: dict[str, float], label_order: list[str]
+) -> None:
+    """Attach a per-class population breakdown to a chart in place.
+
+    Unlike _attach_risk_area (which derives area by multiplying a single
+    total by percentage — a uniform-density assumption), pop_by_class must
+    already be a true raster zonal sum (see core.population.population_by_class)
+    since population density is never uniform across an AOI. label_order must
+    match the order of chart["labels"]; missing labels default to 0.0.
+    """
+    if not isinstance(chart, dict) or not pop_by_class:
+        return
+    chart["data_population"] = [pop_by_class.get(label, 0.0) for label in label_order]
+
+
 @dataclass
 class AnalysisConfig:
     """Input contract accepted by every `BaseUseCase.execute()`.

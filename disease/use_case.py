@@ -11,6 +11,7 @@ from climate_change.core.base_use_case import (
     AnalysisOutput,
     BaseUseCase,
     _aoi_area_ha,
+    _attach_population,
     _attach_risk_area,
     _ee_geometry_from_geojson,
     _lons_lats,
@@ -19,9 +20,10 @@ from climate_change.core.base_use_case import (
 _log = logging.getLogger(__name__)
 from climate_change.core.dask_engine import DaskEngine
 from climate_change.core.gee_auth import ensure_gee
+from climate_change.core.population import at_risk_population
 from climate_change.core.runner import register_module
 
-from .cog_export import export_disease_cog
+from .cog_export import DiseaseCogResult, export_disease_cog
 from .features import (
     _normalise_date_window,
     build_feature_datasets,
@@ -47,6 +49,27 @@ def _apply_raster_risk_pct(result: dict, risk_pct: list[float]) -> None:
     risk_dist = result.get("charts", {}).get("riskDist")
     if risk_dist is not None:
         risk_dist["data"] = risk_pct
+
+
+DISEASE_AT_RISK_LABELS = ["Medium Risk", "High Risk"]
+DISEASE_ALL_LABELS = ["Low Risk", "Medium Risk", "High Risk"]
+
+
+def _attach_population_stats(result: dict, raster_result: DiseaseCogResult | None) -> None:
+    """
+    Attach population-exposure stats/chart data from export_disease_cog's
+    raster_result, if population data was available. Population fetch is
+    best-effort (core.population.fetch_population_count_safe) — its absence
+    must not break the rest of the result, so this is a no-op in that case.
+    """
+    if not raster_result or raster_result.get("total_population") is None:
+        return
+    pop_by_class = raster_result["population_by_class"]
+    result["stats"]["total_population"] = raster_result["total_population"]
+    result["stats"]["population_affected"] = at_risk_population(
+        pop_by_class, DISEASE_AT_RISK_LABELS
+    )
+    _attach_population(result.get("charts", {}).get("riskDist"), pop_by_class, DISEASE_ALL_LABELS)
 
 
 class DiseaseRiskUseCase(BaseUseCase):
@@ -96,6 +119,7 @@ class DiseaseRiskUseCase(BaseUseCase):
 
         raster_paths: dict[str, str] | None = None
         raster_error: str | None = None
+        raster_result: DiseaseCogResult | None = None
         try:
             raster_result = export_disease_cog(
                 gbm_model=features["_gbm"],
@@ -116,6 +140,7 @@ class DiseaseRiskUseCase(BaseUseCase):
         if total_area_ha:
             result["stats"]["total_area_ha"] = round(total_area_ha, 1)
             _attach_risk_area(result.get("charts", {}).get("riskDist"), total_area_ha)
+        _attach_population_stats(result, raster_result)
 
         geojson_features = []
         if config.aoi_geojson:
@@ -228,6 +253,7 @@ class DiseaseRiskUseCase(BaseUseCase):
 
         cog_paths: dict[str, str] | None = None
         cog_error: str | None = None
+        raster_result: DiseaseCogResult | None = None
         try:
             raster_result = export_disease_cog(
                 gbm_model=features["_gbm"],
@@ -252,6 +278,7 @@ class DiseaseRiskUseCase(BaseUseCase):
         if total_area_ha:
             result["stats"]["total_area_ha"] = round(total_area_ha, 1)
             _attach_risk_area(result.get("charts", {}).get("riskDist"), total_area_ha)
+        _attach_population_stats(result, raster_result)
 
         result["stats"].update(
             {

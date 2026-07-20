@@ -11,6 +11,7 @@ from climate_change.core.base_use_case import (
     BaseUseCase,
     _aoi_area_ha,
     _aoi_geometries,
+    _attach_population,
     _attach_risk_area,
     _ee_geometry_from_geojson,
     _lons_lats,
@@ -176,6 +177,43 @@ class TestAttachRiskArea:
         chart = {"labels": ["Low", "High"]}
         _attach_risk_area(chart, 1000.0)
         assert "area_ha" not in chart
+
+
+# ── _attach_population ────────────────────────────────────────────────────────
+
+
+class TestAttachPopulation:
+    def test_maps_pop_by_class_to_label_order(self):
+        chart = {"labels": ["Low", "Medium", "High"], "data": [50.0, 30.0, 20.0]}
+        pop_by_class = {"Low": 1000.0, "Medium": 600.0, "High": 400.0}
+        _attach_population(chart, pop_by_class, ["Low", "Medium", "High"])
+        assert chart["data_population"] == [1000.0, 600.0, 400.0]
+
+    def test_missing_label_defaults_to_zero(self):
+        chart = {"data": [100.0]}
+        _attach_population(chart, {"Low": 1000.0}, ["Low", "Medium"])
+        assert chart["data_population"] == [1000.0, 0.0]
+
+    def test_empty_pop_by_class_is_noop(self):
+        chart = {"data": [100.0]}
+        _attach_population(chart, {}, ["Low"])
+        assert "data_population" not in chart
+
+    def test_none_chart_is_noop(self):
+        _attach_population(None, {"Low": 1000.0}, ["Low"])  # must not raise
+
+    def test_non_dict_chart_is_noop(self):
+        _attach_population([1, 2, 3], {"Low": 1000.0}, ["Low"])  # must not raise
+
+    def test_does_not_touch_area_fields(self):
+        """A true raster zonal sum (population) must never be derived by
+        multiplying a total by percentage the way _attach_risk_area does —
+        confirm the two helpers write disjoint keys and don't interfere."""
+        chart = {"labels": ["Low", "High"], "data": [25.0, 75.0]}
+        _attach_risk_area(chart, 1000.0)
+        _attach_population(chart, {"Low": 10.0, "High": 90.0}, ["Low", "High"])
+        assert chart["area_ha"] == [250.0, 750.0]
+        assert chart["data_population"] == [10.0, 90.0]
 
 
 # ── AnalysisConfig ─────────────────────────────────────────────────────────────

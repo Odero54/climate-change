@@ -417,6 +417,7 @@ def build_feature_datasets(aoi: ee.Geometry, config: dict) -> dict[str, xr.Datas
     and cog_export.export_flood_cog.
     """
     from climate_change.core.dask_engine import DaskEngine
+    from climate_change.core.population import fetch_population_count_safe
 
     scale = config.get("scale", 90)
     pre_start, pre_end = _pre_flood_window(config)
@@ -453,6 +454,10 @@ def build_feature_datasets(aoi: ee.Geometry, config: dict) -> dict[str, xr.Datas
                 mndwi_end,
                 scale=scale,
             ),
+            # Raw population COUNT for exposure reporting (population within
+            # medium/high/very-high risk zones). Best-effort — see
+            # core.population.fetch_population_count_safe.
+            "population_count": lambda: fetch_population_count_safe(aoi, scale=scale),
         }
     )
 
@@ -602,6 +607,14 @@ def align_datasets(
     """
     Interpolate all datasets onto the reference grid (terrain at 90 m by default).
     Landcover is treated as categorical and uses nearest-neighbour interpolation.
+    population_count is passed through entirely unchanged, at its own native
+    ~100 m resolution — it is never interpolated onto this reference grid.
+    Summing population within a risk zone requires the opposite: upsampling
+    the (categorical) classification onto population's native grid — see
+    core.population.population_exposure, which cog_export.py uses for this
+    instead of relying on align_datasets. Interpolating population here would
+    silently corrupt totals (verified against live GEE data — see
+    core.population.fetch_population_count's docstring).
 
     Each dataset is chunked before interpolation so that xarray produces
     Dask-backed lazy arrays; dask.compute() then materialises them all
@@ -614,11 +627,15 @@ def align_datasets(
 
     lazy: dict[str, xr.Dataset] = {ref_key: ref}
     for key, ds in datasets.items():
-        if key == ref_key:
+        if key == ref_key or ds is None or key == "population_count":
             continue
         method = method_categorical if key == "landcover" else method_continuous
         lazy[key] = ds.chunk(_CHUNK).interp(lat=ref.lat, lon=ref.lon, method=method)
 
     keys = list(lazy)
     computed = compute(*[lazy[k] for k in keys])
-    return dict(zip(keys, computed))
+    result = dict(zip(keys, computed))
+    pop_ds = datasets.get("population_count")
+    if pop_ds is not None:
+        result["population_count"] = pop_ds
+    return result

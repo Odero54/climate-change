@@ -17,8 +17,13 @@ from drought_monitoring.gee import (
 from drought_monitoring.plot import classify_cdi
 from rasterio.features import geometry_mask
 
-from climate_change.core.base_use_case import _aoi_geometries
+from climate_change.core.base_use_case import _aoi_geometries, _ee_geometry_from_geojson
 from climate_change.core.landcover_mask import WATER_CLASS, fetch_landcover_class_array
+from climate_change.core.population import (
+    at_risk_population,
+    fetch_population_count_safe,
+    population_exposure,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -55,6 +60,11 @@ DROUGHT_CLASS_ORDER = [
     "Very wet",
     "Moderately wet",
 ]
+
+# "At risk" for population-exposure reporting is the two most severe drought
+# classes only — not a medium+high framing, since CDI is a bipolar dry<->wet
+# spectrum rather than a single-direction risk scale.
+DROUGHT_AT_RISK_LABELS = ["Extreme drought", "Severe drought"]
 
 
 def _normalize_drought_class(label):
@@ -299,11 +309,42 @@ def build_drought_charts(features: dict) -> dict:
     ds = features.get("cdi_maps")
     latest = ds["CDI"].isel(time=-1).values if ds is not None else np.array([])
     valid = latest[np.isfinite(latest)]
+    total_population: float | None = None
+    population_affected: float | None = None
+    pop_by_class: dict[str, float] = {}
     if valid.size:
         classes = np.array([_classify_cdi_value(float(value)) for value in valid])
         counts = {label: int((classes == label).sum()) for label in DROUGHT_CLASS_ORDER}
         labels = [label for label in DROUGHT_CLASS_ORDER if counts[label] > 0]
         data = [round(counts[label] / valid.size * 100, 1) for label in labels]
+
+        pop_ds = _fetch_population(features.get("aoi_geojson")) if ds is not None else None
+        if pop_ds is not None and ds is not None:
+            # Classify the full 2D grid, explicitly transposed to (lat, lon)
+            # order — ds["CDI"]'s raw array is (lon, lat) (see
+            # compute_spatial_uncertainty's comments below), which would
+            # silently mismatch _dataset_transform's (lat, lon) assumption
+            # and warp the upsampled classification incorrectly otherwise.
+            lat_dim, lon_dim = _spatial_dims(ds)
+            latest_latlon = ds["CDI"].isel(time=-1).transpose(lat_dim, lon_dim).values
+            # _dataset_transform always assumes row 0 = north (standard
+            # raster convention), but ds's lat coordinate may be stored
+            # ascending (south-to-north) rather than descending — the same
+            # mismatch _mask_dataset_to_aoi already guards against above.
+            lats = ds[lat_dim].values
+            if len(lats) > 1 and float(lats[0]) < float(lats[-1]):
+                latest_latlon = latest_latlon[::-1, :]
+            class_grid = np.full(latest_latlon.shape, "", dtype=object)
+            finite_mask = np.isfinite(latest_latlon)
+            class_grid[finite_mask] = [
+                _classify_cdi_value(float(v)) for v in latest_latlon[finite_mask]
+            ]
+            class_transform = _dataset_transform(ds)
+            pop_by_class = population_exposure(
+                class_grid, class_transform, pop_ds, classes=DROUGHT_CLASS_ORDER
+            )
+            total_population = round(sum(pop_by_class.values()), 1)
+            population_affected = at_risk_population(pop_by_class, DROUGHT_AT_RISK_LABELS)
     else:
         labels = temporal_severity_dist.index.tolist()
         data = temporal_severity_dist.tolist()
@@ -314,6 +355,10 @@ def build_drought_charts(features: dict) -> dict:
         "basis": "latest_spatial_aoi",
         "valid_pixel_count": int(valid.size),
     }
+    if total_population is not None:
+        severity["data_population"] = [pop_by_class.get(label, 0.0) for label in labels]
+        severity["total_population"] = total_population
+        severity["population_affected"] = population_affected
     temporal_severity = {
         "labels": temporal_severity_dist.index.tolist(),
         "data": temporal_severity_dist.tolist(),
@@ -413,6 +458,36 @@ def _mask_dataset_water_bodies(ds, aoi_geojson: dict | None):
         name="water_body",
     )
     return ds.where(~water_mask)
+
+
+def _fetch_population(aoi_geojson: dict | None) -> xr.Dataset | None:
+    """
+    Fetch WorldPop population counts (native ~100 m resolution — never
+    aligned/downsampled onto the CDI grid) for population-exposure reporting
+    (population within extreme/severe drought zones). Best-effort — returns
+    None on any failure (no aoi_geojson, GEE error) so it never breaks the
+    rest of the analysis, same as core.population.fetch_population_count_safe's
+    own contract.
+
+    Deliberately does not interpolate population onto the (coarser) CDI grid
+    the way _mask_dataset_water_bodies does for landcover — verified against
+    live GEE data that downsampling an additive quantity like population
+    counts (via reduceResolution or nearest-neighbour interpolation) silently
+    corrupts totals. See core.population.fetch_population_count's docstring.
+    build_drought_charts instead upsamples the (categorical) CDI
+    classification onto population's native grid via
+    core.population.population_exposure.
+    """
+    if not aoi_geojson:
+        return None
+
+    try:
+        aoi = _ee_geometry_from_geojson(aoi_geojson)
+    except Exception:
+        _log.warning("Could not build ee.Geometry for population fetch", exc_info=True)
+        return None
+
+    return fetch_population_count_safe(aoi, scale=1000)
 
 
 def _mask_dataset_to_aoi(ds, aoi_geojson: dict | None):

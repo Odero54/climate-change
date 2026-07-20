@@ -12,14 +12,17 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
 from climate_change.core.landcover_mask import WATER_CLASS
+from climate_change.core.population import population_exposure
 
-from .features import FEATURE_COLS, align_datasets
+from .features import DEGRADATION_CLASSES, FEATURE_COLS, align_datasets
 
 
 class DegradationCogResult(TypedDict):
     degradation_risk: str
     risk_pct: list[float]
     risk_ha: list[float]
+    population_by_class: dict[str, float]
+    total_population: float | None
 
 
 def export_degradation_cog(
@@ -125,4 +128,18 @@ def export_degradation_cog(
     pixel_ha = (scale**2) / 10_000
     risk_ha = [round(not_deg_count * pixel_ha, 1), round(deg_count * pixel_ha, 1)]
 
-    return {"degradation_risk": str(cog_path), "risk_pct": risk_pct, "risk_ha": risk_ha}
+    population_by_class: dict[str, float] = {}
+    total_population: float | None = None
+    pop_ds = aligned.get("population_count")
+    if pop_ds is not None:
+        by_int = population_exposure(prediction_2d, transform, pop_ds, classes=[0, 1])
+        population_by_class = {DEGRADATION_CLASSES[v]: by_int[str(v)] for v in (0, 1)}
+        total_population = round(sum(population_by_class.values()), 1)
+
+    return {
+        "degradation_risk": str(cog_path),
+        "risk_pct": risk_pct,
+        "risk_ha": risk_ha,
+        "population_by_class": population_by_class,
+        "total_population": total_population,
+    }

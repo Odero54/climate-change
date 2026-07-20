@@ -13,6 +13,7 @@ from xgboost import Booster, DMatrix
 
 from climate_change.core.base_use_case import _aoi_geometries
 from climate_change.core.landcover_mask import BUILTUP_CLASS, WATER_CLASS
+from climate_change.core.population import population_exposure
 
 from .features import FEATURE_COLS, align_datasets
 from .model import pad_rf_proba
@@ -103,6 +104,14 @@ def predict_food_security_grid(
     total = int(valid_values.size)
     percentages = (counts / total * 100).round(1).tolist() if total else [0.0, 0.0, 0.0]
 
+    population_by_class: dict[str, float] = {}
+    total_population: float | None = None
+    pop_ds = aligned.get("population_count")
+    if pop_ds is not None:
+        by_int = population_exposure(risk_grid, transform, pop_ds, classes=[1, 2, 3])
+        population_by_class = {RISK_INT[v]: by_int[str(v)] for v in (1, 2, 3)}
+        total_population = round(sum(population_by_class.values()), 1)
+
     return {
         "risk_grid": risk_grid,
         "transform": transform,
@@ -112,6 +121,8 @@ def predict_food_security_grid(
         "counts": counts.astype(int).tolist(),
         "percentages": percentages,
         "valid_pixel_count": total,
+        "population_by_class": population_by_class,
+        "total_population": total_population,
     }
 
 

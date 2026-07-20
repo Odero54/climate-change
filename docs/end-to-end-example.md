@@ -65,7 +65,9 @@ asyncio.run(main())
   in a frontend renders).
 - **`output.raster_path`** — dict of exported COG paths, one per model
   variant (`{"gbm": "outputs/disease_homabay_gbm.tif", ...}`).
-- **`output.stats`** — e.g. per-class pixel percentages, hotspot count.
+- **`output.stats`** — e.g. per-class pixel percentages, hotspot count, and
+  (best-effort) `total_population`/`population_affected` — see
+  [Concepts § Population exposure](concepts.md#population-exposure).
 - **`output.shap`** — SHAP feature importances for the primary model.
 - **`output.charts`** — chart-ready payloads (e.g. monthly NDVI/rainfall
   trend, hotspot map data).
