@@ -40,3 +40,9 @@ release version:
     git tag "v{{version}}"
     git push origin main
     git push origin "v{{version}}"
+
+# Verify a release landed: GitHub release + PyPI package version (defaults to pyproject.toml's version)
+verify version=`grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/'`:
+    gh release view "v{{version}}"
+    echo "---pypi---"
+    curl -s https://pypi.org/pypi/climate-change/json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['info']['version'])"
