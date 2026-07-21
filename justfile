@@ -26,6 +26,10 @@ fmt:
 test:
     uv run --extra dev pytest tests/ --verbose
 
+# Launch JupyterLab
+lab:
+    uv run --extra dev jupyter lab
+
 # Bump the version, tag, and push — triggers .github/workflows/publish.yml
 # which runs the tests, builds, publishes to PyPI, and creates the GitHub release.
 release version:
