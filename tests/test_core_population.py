@@ -6,12 +6,16 @@ fetch_* function across the domain features.py files is untested — see
 this file's live-smoke-test note in the population-exposure feature plan.
 """
 
+import math
+
 import numpy as np
 import pytest
 import xarray as xr
 from rasterio.transform import from_bounds
 
 from climate_change.core.population import (
+    _bbox_pixel_bytes,
+    _split_bbox_into_tiles,
     at_risk_population,
     population_by_class,
     population_exposure,
@@ -82,6 +86,58 @@ class TestUpsampleClassGrid:
         assert (result[:2, 2:] == 2).all()
         assert (result[2:, :2] == 3).all()
         assert (result[2:, 2:] == 4).all()
+
+
+class TestSplitBboxIntoTiles:
+    """_split_bbox_into_tiles/_bbox_pixel_bytes are pure geometry math (no GEE
+    call), unlike fetch_population_count itself — see this file's docstring
+    for why the live-fetch functions stay untested."""
+
+    def test_small_bbox_fits_under_cap_returns_single_tile(self):
+        tiles = _split_bbox_into_tiles(0.0, 0.0, 0.01, 0.01, scale=100)
+        assert tiles == [(0.0, 0.0, 0.01, 0.01)]
+
+    def test_large_bbox_splits_into_a_square_grid(self):
+        min_lon, min_lat, max_lon, max_lat = 0.0, 0.0, 5.0, 5.0
+        scale = 100
+        max_bytes = 1_000_000
+
+        total_bytes = _bbox_pixel_bytes(min_lon, min_lat, max_lon, max_lat, scale)
+        assert total_bytes > max_bytes  # sanity: this bbox actually needs splitting
+
+        tiles = _split_bbox_into_tiles(
+            min_lon, min_lat, max_lon, max_lat, scale, max_bytes=max_bytes
+        )
+        expected_grid_n = math.ceil(math.sqrt(total_bytes / max_bytes))
+        assert len(tiles) == expected_grid_n**2
+
+    def test_tiles_cover_the_original_bbox_without_gaps_or_overlap(self):
+        min_lon, min_lat, max_lon, max_lat = 0.0, 0.0, 4.0, 4.0
+        tiles = _split_bbox_into_tiles(
+            min_lon, min_lat, max_lon, max_lat, scale=10, max_bytes=2_000_000
+        )
+
+        # Every tile's edges land on values on both axes, and the extremes
+        # match the original bbox exactly — i.e. a regular grid with no gaps.
+        lons = sorted({round(t[0], 9) for t in tiles} | {round(t[2], 9) for t in tiles})
+        lats = sorted({round(t[1], 9) for t in tiles} | {round(t[3], 9) for t in tiles})
+        assert lons[0] == pytest.approx(min_lon)
+        assert lons[-1] == pytest.approx(max_lon)
+        assert lats[0] == pytest.approx(min_lat)
+        assert lats[-1] == pytest.approx(max_lat)
+
+        total_area = sum((t[2] - t[0]) * (t[3] - t[1]) for t in tiles)
+        assert total_area == pytest.approx((max_lon - min_lon) * (max_lat - min_lat))
+
+    def test_each_tile_fits_within_the_size_cap(self):
+        min_lon, min_lat, max_lon, max_lat = 0.0, 0.0, 5.0, 5.0
+        scale = 100
+        max_bytes = 1_000_000
+        tiles = _split_bbox_into_tiles(
+            min_lon, min_lat, max_lon, max_lat, scale, max_bytes=max_bytes
+        )
+        for t_min_lon, t_min_lat, t_max_lon, t_max_lat in tiles:
+            assert _bbox_pixel_bytes(t_min_lon, t_min_lat, t_max_lon, t_max_lat, scale) <= max_bytes
 
 
 class TestPopulationExposure:
