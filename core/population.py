@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -16,6 +17,16 @@ _log = logging.getLogger(__name__)
 
 POPULATION_COLLECTION = "WorldPop/GP/100m/pop"
 _NATIVE_SCALE = 100  # WorldPop's native pixel size in metres
+
+# GEE's synchronous getDownloadURL rejects any request whose exported raster
+# would exceed 50,331,648 bytes (observed live: a 400 response quoting that
+# exact figure). Tile with a safety margin under it rather than against it
+# exactly, since _bbox_pixel_bytes is only an estimate (equirectangular
+# metres-per-degree, uncompressed float32 pixel count) and the actual GeoTIFF
+# adds header/tag overhead on top.
+_MAX_DOWNLOAD_BYTES = 40_000_000
+_BYTES_PER_PIXEL = 4  # WorldPop population band is float32
+_METRES_PER_DEGREE_LAT = 110_540  # ~constant; a degree of longitude scales by cos(latitude)
 
 
 def _collection_size(collection: ee.ImageCollection) -> int:
@@ -33,6 +44,54 @@ def _require_population_image(collection: ee.ImageCollection, year: int) -> ee.I
     if _collection_size(collection) == 0:
         raise ValueError(f"No WorldPop population data was available for {year}.")
     return collection.first()
+
+
+def _bbox_pixel_bytes(
+    min_lon: float, min_lat: float, max_lon: float, max_lat: float, scale: int
+) -> int:
+    """Estimate the uncompressed byte size of a GEO_TIFF export covering this
+    bounding box at the given scale (metres/pixel), used to decide whether a
+    single getDownloadURL call would exceed GEE's per-request size cap."""
+    mean_lat_rad = math.radians((min_lat + max_lat) / 2)
+    width_m = (max_lon - min_lon) * _METRES_PER_DEGREE_LAT * math.cos(mean_lat_rad)
+    height_m = (max_lat - min_lat) * _METRES_PER_DEGREE_LAT
+    width_px = max(1, math.ceil(width_m / scale))
+    height_px = max(1, math.ceil(height_m / scale))
+    return width_px * height_px * _BYTES_PER_PIXEL
+
+
+def _split_bbox_into_tiles(
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float,
+    scale: int,
+    max_bytes: int = _MAX_DOWNLOAD_BYTES,
+) -> list[tuple[float, float, float, float]]:
+    """
+    Split a bounding box into a regular grid of sub-boxes, each estimated to
+    stay under `max_bytes` when exported at `scale`, so a large AOI can be
+    fetched as several within-limit GEE downloads instead of one oversized
+    one. Returns the whole bbox as a single tile when it already fits.
+    """
+    total_bytes = _bbox_pixel_bytes(min_lon, min_lat, max_lon, max_lat, scale)
+    if total_bytes <= max_bytes:
+        return [(min_lon, min_lat, max_lon, max_lat)]
+
+    grid_n = math.ceil(math.sqrt(total_bytes / max_bytes))
+    lon_step = (max_lon - min_lon) / grid_n
+    lat_step = (max_lat - min_lat) / grid_n
+
+    return [
+        (
+            min_lon + i * lon_step,
+            min_lat + j * lat_step,
+            min_lon + (i + 1) * lon_step,
+            min_lat + (j + 1) * lat_step,
+        )
+        for i in range(grid_n)
+        for j in range(grid_n)
+    ]
 
 
 def fetch_population_count(aoi: ee.Geometry, scale: int, year: int = 2020) -> xr.Dataset:
@@ -66,6 +125,15 @@ def fetch_population_count(aoi: ee.Geometry, scale: int, year: int = 2020) -> xr
     verified live that the GeoTIFF export does not set a GDAL/rasterio
     nodata tag (da.rio.nodata comes back None), so summing the raw array
     would otherwise corrupt totals by many orders of magnitude.
+
+    A large AOI at native ~100 m resolution can serialize to more bytes than
+    GEE's getDownloadURL allows in one request (50,331,648 bytes — observed
+    live from a 400 response for a ~54.5 MB export). Rather than coarsening
+    the scale to fit (see the reduceResolution discussion above for why that
+    silently corrupts totals), the AOI's bounding box is split into a grid of
+    sub-regions that each fit under the cap, fetched individually at the same
+    native scale, and mosaicked back together — resolution and correctness
+    are unaffected, just the number of HTTP round trips.
     """
     import ee
     import xarray as xr
@@ -78,10 +146,39 @@ def fetch_population_count(aoi: ee.Geometry, scale: int, year: int = 2020) -> xr
     pop_img = _require_population_image(pop_collection, year).select("population").clip(aoi)
     fetch_scale = min(scale, _NATIVE_SCALE)
 
-    url = pop_img.getDownloadURL(
-        {"region": aoi, "scale": fetch_scale, "crs": "EPSG:4326", "format": "GEO_TIFF"}
-    )
-    da = _download_band(url).squeeze()
+    bounds_coords = cast(list, aoi.bounds().coordinates().getInfo())[0]
+    lons = [c[0] for c in bounds_coords]
+    lats = [c[1] for c in bounds_coords]
+    tiles = _split_bbox_into_tiles(min(lons), min(lats), max(lons), max(lats), fetch_scale)
+
+    if len(tiles) == 1:
+        url = pop_img.getDownloadURL(
+            {"region": aoi, "scale": fetch_scale, "crs": "EPSG:4326", "format": "GEO_TIFF"}
+        )
+        da = _download_band(url).squeeze()
+    else:
+        _log.info(
+            "Population raster for this AOI exceeds GEE's per-request size cap; "
+            "fetching in %d tiles at scale=%dm.",
+            len(tiles),
+            fetch_scale,
+        )
+        tile_arrays = []
+        for min_lon, min_lat, max_lon, max_lat in tiles:
+            tile_region = ee.Geometry.Rectangle(
+                [min_lon, min_lat, max_lon, max_lat], proj="EPSG:4326", geodesic=False
+            )
+            url = pop_img.getDownloadURL(
+                {
+                    "region": tile_region,
+                    "scale": fetch_scale,
+                    "crs": "EPSG:4326",
+                    "format": "GEO_TIFF",
+                }
+            )
+            tile_arrays.append(_download_band(url).squeeze())
+        da = _merge_tiles(tile_arrays)
+
     # Population can't be negative — clamp WorldPop's unmasked -99999
     # sentinel (and any other negative noise) to 0 rather than relying on a
     # nodata tag that isn't actually present in the export.
@@ -122,6 +219,14 @@ def _download_band(url: str, timeout: int = 600) -> xr.DataArray:
         body = resp.text[:1000] if resp.text else ""
         raise HTTPError(f"{exc}. Earth Engine response: {body}", response=resp) from exc
     return cast("xr.DataArray", rxr.open_rasterio(io.BytesIO(resp.content)))
+
+
+def _merge_tiles(tiles: list[xr.DataArray]) -> xr.DataArray:
+    """Mosaic adjacent same-scale rioxarray tiles (from _split_bbox_into_tiles)
+    back into a single DataArray on one regular grid."""
+    from rioxarray.merge import merge_arrays
+
+    return cast("xr.DataArray", merge_arrays(tiles))
 
 
 def population_by_class(
