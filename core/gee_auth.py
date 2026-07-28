@@ -171,14 +171,32 @@ def ensure_gee(project: str = "", *, allow_prompt: bool = False) -> None:
 
         kwargs: dict = {"project": resolved} if resolved else {}
 
-        if in_worker:
+        # A service-account key (GOOGLE_APPLICATION_CREDENTIALS) means
+        # Application Default Credentials will authenticate ee.Initialize()
+        # automatically — this must take priority over drought_monitoring's
+        # authenticate() below, which unconditionally calls ee.Authenticate()
+        # (interactive OAuth) first. That fails outright in a headless
+        # server/container (no browser, no TTY) even when a perfectly valid
+        # service-account key is already in place.
+        has_service_account = bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip())
+
+        if in_worker or has_service_account:
             try:
                 ee.Initialize(**kwargs)
             except Exception as exc:
+                if in_worker:
+                    raise RuntimeError(
+                        "GEE initialisation failed inside a Dask worker.\n"
+                        "  Run  earthengine authenticate  in a terminal before\n"
+                        "  starting the Dask cluster so credentials are on disk.\n"
+                        f"Original error: {exc}"
+                    ) from exc
                 raise RuntimeError(
-                    "GEE initialisation failed inside a Dask worker.\n"
-                    "  Run  earthengine authenticate  in a terminal before\n"
-                    "  starting the Dask cluster so credentials are on disk.\n"
+                    "GEE initialisation failed using the service-account "
+                    "credentials at GOOGLE_APPLICATION_CREDENTIALS.\n"
+                    "  • Confirm the file is a valid service-account JSON key.\n"
+                    "  • Confirm the Earth Engine API is enabled and the "
+                    "project/service account are registered for Earth Engine access.\n"
                     f"Original error: {exc}"
                 ) from exc
         else:
