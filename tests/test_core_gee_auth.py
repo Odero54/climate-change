@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from climate_change.core.gee_auth import _resolve_project, validate_gee_project
+from climate_change.core.gee_auth import _resolve_project, ensure_gee, validate_gee_project
 
 
 class TestResolveProject:
@@ -26,6 +26,43 @@ class TestResolveProject:
         monkeypatch.setenv("GEE_PROJECT", "env-project")
         result = _resolve_project("explicit-project", allow_prompt=False)
         assert result == "explicit-project"
+
+
+class TestEnsureGeeAuthPath:
+    """ensure_gee must prefer direct ee.Initialize() over
+    drought_monitoring.gee.authenticate() (interactive OAuth) whenever a
+    service-account key is configured — see gee_auth.py's comment for why:
+    that wrapper unconditionally calls the interactive ee.Authenticate()
+    first, which fails outright in a headless server with no browser/TTY,
+    even when a valid service-account key is already mounted."""
+
+    def test_service_account_present_calls_ee_initialize_directly(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/gee-service-account.json")
+        with (
+            patch("ee.Initialize") as mock_ee_init,
+            patch("drought_monitoring.gee.authenticate") as mock_dm_auth,
+        ):
+            ensure_gee("service-account-project", allow_prompt=False)
+        mock_ee_init.assert_called_once_with(project="service-account-project")
+        mock_dm_auth.assert_not_called()
+
+    def test_no_service_account_uses_drought_monitoring_authenticate(self, monkeypatch):
+        monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+        with (
+            patch("ee.Initialize") as mock_ee_init,
+            patch("drought_monitoring.gee.authenticate") as mock_dm_auth,
+        ):
+            ensure_gee("interactive-project", allow_prompt=False)
+        mock_dm_auth.assert_called_once_with(project="interactive-project", quiet=True)
+        mock_ee_init.assert_not_called()
+
+    def test_service_account_initialise_failure_raises_clear_runtime_error(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/gee-service-account.json")
+        with (
+            patch("ee.Initialize", side_effect=Exception("bad key")),
+            pytest.raises(RuntimeError, match="service-account credentials"),
+        ):
+            ensure_gee("broken-service-account-project", allow_prompt=False)
 
 
 class TestValidateGeeProject:
