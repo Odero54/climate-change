@@ -12,22 +12,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install ruff and mypy
-        run: pip install ruff mypy
+      - name: Install dependencies (locked)
+        run: uv sync --extra dev
 
+      # Uses the versions pinned in uv.lock, same as `just check` locally —
+      # a bare `pip install ruff mypy` here would grab whatever's newest on
+      # PyPI at CI run time, which can flag files the locked version doesn't
+      # (e.g. ruff changing markdown-formatting behaviour between releases).
       - name: Ruff — check lint rules
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Ruff — check formatting
-        run: ruff format --check .
+        run: uv run ruff format --check .
 
       - name: Mypy — type check
-        run: mypy . --ignore-missing-imports
+        run: uv run mypy . --ignore-missing-imports
 
   test:
     runs-on: ubuntu-latest
