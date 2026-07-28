@@ -1,5 +1,6 @@
 """Tests for core/gee_auth.py."""
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -29,21 +30,47 @@ class TestResolveProject:
 
 
 class TestEnsureGeeAuthPath:
-    """ensure_gee must prefer direct ee.Initialize() over
-    drought_monitoring.gee.authenticate() (interactive OAuth) whenever a
-    service-account key is configured — see gee_auth.py's comment for why:
-    that wrapper unconditionally calls the interactive ee.Authenticate()
-    first, which fails outright in a headless server with no browser/TTY,
-    even when a valid service-account key is already mounted."""
+    """ensure_gee must build explicit ee.ServiceAccountCredentials (which
+    requests Earth Engine's required OAuth scopes) whenever a service-account
+    key is configured, rather than either:
+    - bare ee.Initialize() — its default credentials='persistent' falls back
+      to plain google.auth.default() with no explicit scopes, which Earth
+      Engine rejects with "invalid_scope" (confirmed live), or
+    - drought_monitoring.gee.authenticate() — unconditionally calls the
+      interactive ee.Authenticate() first, which fails outright in a
+      headless server with no browser/TTY."""
 
-    def test_service_account_present_calls_ee_initialize_directly(self, monkeypatch):
-        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/gee-service-account.json")
+    def _write_key_file(self, tmp_path, email="svc@my-project.iam.gserviceaccount.com"):
+        key_file = tmp_path / "key.json"
+        key_file.write_text(json.dumps({"client_email": email}))
+        return str(key_file)
+
+    def test_service_account_present_uses_explicit_service_account_credentials(
+        self, monkeypatch, tmp_path
+    ):
+        key_file = self._write_key_file(tmp_path)
+        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", key_file)
+        fake_credentials = object()
         with (
+            patch("ee.ServiceAccountCredentials", return_value=fake_credentials) as mock_sac,
             patch("ee.Initialize") as mock_ee_init,
             patch("drought_monitoring.gee.authenticate") as mock_dm_auth,
         ):
             ensure_gee("service-account-project", allow_prompt=False)
-        mock_ee_init.assert_called_once_with(project="service-account-project")
+        mock_sac.assert_called_once_with("svc@my-project.iam.gserviceaccount.com", key_file)
+        mock_ee_init.assert_called_once_with(fake_credentials, project="service-account-project")
+        mock_dm_auth.assert_not_called()
+
+    def test_unreadable_key_file_falls_back_to_empty_email(self, monkeypatch, tmp_path):
+        missing_key_file = str(tmp_path / "does-not-exist.json")
+        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", missing_key_file)
+        with (
+            patch("ee.ServiceAccountCredentials", return_value=object()) as mock_sac,
+            patch("ee.Initialize"),
+            patch("drought_monitoring.gee.authenticate") as mock_dm_auth,
+        ):
+            ensure_gee("unreadable-key-project", allow_prompt=False)
+        mock_sac.assert_called_once_with("", missing_key_file)
         mock_dm_auth.assert_not_called()
 
     def test_no_service_account_uses_drought_monitoring_authenticate(self, monkeypatch):
@@ -56,10 +83,14 @@ class TestEnsureGeeAuthPath:
         mock_dm_auth.assert_called_once_with(project="interactive-project", quiet=True)
         mock_ee_init.assert_not_called()
 
-    def test_service_account_initialise_failure_raises_clear_runtime_error(self, monkeypatch):
-        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/gee-service-account.json")
+    def test_service_account_initialise_failure_raises_clear_runtime_error(
+        self, monkeypatch, tmp_path
+    ):
+        key_file = self._write_key_file(tmp_path)
+        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", key_file)
         with (
-            patch("ee.Initialize", side_effect=Exception("bad key")),
+            patch("ee.ServiceAccountCredentials"),
+            patch("ee.Initialize", side_effect=Exception("invalid_scope")),
             pytest.raises(RuntimeError, match="service-account credentials"),
         ):
             ensure_gee("broken-service-account-project", allow_prompt=False)

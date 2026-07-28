@@ -65,6 +65,7 @@ What is NOT stored here:
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 
@@ -171,26 +172,44 @@ def ensure_gee(project: str = "", *, allow_prompt: bool = False) -> None:
 
         kwargs: dict = {"project": resolved} if resolved else {}
 
-        # A service-account key (GOOGLE_APPLICATION_CREDENTIALS) means
-        # Application Default Credentials will authenticate ee.Initialize()
-        # automatically — this must take priority over drought_monitoring's
-        # authenticate() below, which unconditionally calls ee.Authenticate()
-        # (interactive OAuth) first. That fails outright in a headless
-        # server/container (no browser, no TTY) even when a perfectly valid
-        # service-account key is already in place.
-        has_service_account = bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip())
+        # A service-account key (GOOGLE_APPLICATION_CREDENTIALS) must take
+        # priority over drought_monitoring's authenticate() below, which
+        # unconditionally calls ee.Authenticate() (interactive OAuth) first
+        # — that fails outright in a headless server/container (no browser,
+        # no TTY) even when a valid service-account key is already in place.
+        service_account_key_file = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
 
-        if in_worker or has_service_account:
+        if in_worker:
             try:
                 ee.Initialize(**kwargs)
             except Exception as exc:
-                if in_worker:
-                    raise RuntimeError(
-                        "GEE initialisation failed inside a Dask worker.\n"
-                        "  Run  earthengine authenticate  in a terminal before\n"
-                        "  starting the Dask cluster so credentials are on disk.\n"
-                        f"Original error: {exc}"
-                    ) from exc
+                raise RuntimeError(
+                    "GEE initialisation failed inside a Dask worker.\n"
+                    "  Run  earthengine authenticate  in a terminal before\n"
+                    "  starting the Dask cluster so credentials are on disk.\n"
+                    f"Original error: {exc}"
+                ) from exc
+        elif service_account_key_file:
+            # ee.Initialize()'s default credentials='persistent' falls back
+            # to plain google.auth.default() when no `earthengine
+            # authenticate`-issued token is cached — which *does* pick up
+            # GOOGLE_APPLICATION_CREDENTIALS, but requests no explicit OAuth
+            # scopes, so Earth Engine rejects the resulting token with
+            # "invalid_scope: Invalid OAuth scope or ID token audience
+            # provided." (confirmed live). ee.ServiceAccountCredentials
+            # builds the credentials with Earth Engine's required scopes
+            # (oauth.SCOPES) instead — the pattern Earth Engine's own docs
+            # recommend for service accounts, and the only one that works.
+            try:
+                email = ""
+                try:
+                    with open(service_account_key_file) as f:
+                        email = json.load(f).get("client_email", "")
+                except (OSError, ValueError):
+                    pass  # not a readable JSON key — ServiceAccountCredentials will raise a clear error
+                credentials = ee.ServiceAccountCredentials(email, service_account_key_file)
+                ee.Initialize(credentials, **kwargs)
+            except Exception as exc:
                 raise RuntimeError(
                     "GEE initialisation failed using the service-account "
                     "credentials at GOOGLE_APPLICATION_CREDENTIALS.\n"
