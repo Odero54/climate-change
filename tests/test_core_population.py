@@ -1,9 +1,10 @@
 """Tests for core/population.py — population_by_class, at_risk_population.
 
-fetch_population_count/fetch_population_count_safe require live GEE
-credentials and aren't unit-tested here, consistent with how every other
-fetch_* function across the domain features.py files is untested — see
-this file's live-smoke-test note in the population-exposure feature plan.
+fetch_population_count/fetch_population_count_safe (and the worldpop.org/GEE
+network fetches they wrap) require live credentials/network access and
+aren't unit-tested here, consistent with how every other fetch_* function
+across the domain features.py files is untested — see this file's
+live-smoke-test note in the population-exposure feature plan.
 """
 
 import math
@@ -15,6 +16,7 @@ from rasterio.transform import from_bounds
 
 from climate_change.core.population import (
     _bbox_pixel_bytes,
+    _resolve_iso3,
     _split_bbox_into_tiles,
     at_risk_population,
     population_by_class,
@@ -215,3 +217,24 @@ class TestAtRiskPopulation:
     def test_single_label(self):
         pop_by_class = {"Degraded": 42.5, "Not Degraded": 100.0}
         assert at_risk_population(pop_by_class, ["Degraded"]) == 42.5
+
+
+class TestResolveIso3:
+    """
+    _resolve_iso3 is pure and offline (pycountry ships its own bundled
+    ISO-3166 database — no network access), unlike the worldpop.org/GEE
+    fetch functions this feeds into.
+    """
+
+    def test_plain_country_name(self):
+        assert _resolve_iso3("Uganda") == "UGA"
+
+    def test_another_plain_name(self):
+        assert _resolve_iso3("Tanzania") == "TZA"
+
+    def test_blank_returns_none(self):
+        assert _resolve_iso3("") is None
+        assert _resolve_iso3(None) is None
+
+    def test_unresolvable_name_returns_none_not_raises(self):
+        assert _resolve_iso3("Not A Real Country XYZ") is None

@@ -3,6 +3,9 @@ from __future__ import annotations
 import io
 import logging
 import math
+import threading
+import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -27,6 +30,114 @@ _NATIVE_SCALE = 100  # WorldPop's native pixel size in metres
 _MAX_DOWNLOAD_BYTES = 40_000_000
 _BYTES_PER_PIXEL = 4  # WorldPop population band is float32
 _METRES_PER_DEGREE_LAT = 110_540  # ~constant; a degree of longitude scales by cos(latitude)
+
+# worldpop.org's own data catalog — the fallback population source when
+# Earth Engine's WorldPop mirror fails or has no coverage (see
+# fetch_population_count). Per-country unconstrained 100 m population count,
+# years 2000-2020, matching this module's existing year=2020 default.
+_WORLDPOP_ORG_URL = (
+    "https://data.worldpop.org/GIS/Population/Global_2000_2020/"
+    "{year}/{iso3}/{iso3_lower}_ppp_{year}.tif"
+)
+
+
+def _resolve_iso3(country: str | None) -> str | None:
+    """
+    Best-effort country name -> ISO3 lookup for worldpop.org's per-country
+    download URLs, via pycountry's offline ISO-3166 database (fuzzy match,
+    so it also handles common aliases like "Ivory Coast"). Returns None on
+    any miss (blank input, no match) rather than raising, so callers fall
+    back to the Earth Engine mirror instead of failing outright.
+    """
+    if not country:
+        return None
+    import pycountry
+
+    try:
+        matches = pycountry.countries.search_fuzzy(country)
+    except LookupError:
+        return None
+    return matches[0].alpha_3 if matches else None
+
+
+_worldpop_org_download_locks: dict[tuple[str, int], threading.Lock] = {}
+_worldpop_org_download_locks_guard = threading.Lock()
+
+
+def _worldpop_org_country_file(iso3: str, year: int) -> Path:
+    """
+    Download (once) and cache worldpop.org's per-country population GeoTIFF.
+
+    worldpop.org advertises `Accept-Ranges: bytes` but does not actually
+    honour HTTP Range requests in practice — verified live: GDAL's
+    /vsicurl/ windowed read fails with "Range downloading not supported by
+    this server", and a raw ranged GET just hangs. So unlike the GEE path,
+    there's no way to stream only the AOI's window; the whole per-country
+    file (roughly 110 MB-1.2+ GB depending on country size) is downloaded
+    once and cached under core.cache.CACHE_DIR, keyed by iso3/year, and
+    reused by every later request for that country/year.
+
+    Callers within the same process for the same (iso3, year) — e.g.
+    disease/features.py fetches pop_density and the raw population count
+    concurrently in different threads — serialize on a per-key lock rather
+    than racing to download: verified live that two threads downloading to
+    the same fixed ".tif.part" name crashed with a FileNotFoundError when
+    one thread's rename beat the other's. The temp filename is also made
+    unique per download attempt (uuid4) as a second layer of protection
+    against the same race across separate processes, where the in-process
+    lock doesn't apply — os.replace onto the same `dest` is still atomic
+    regardless of which attempt wins.
+    """
+    from climate_change.core.cache import CACHE_DIR
+
+    cache_dir = CACHE_DIR / "worldpop_org"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    dest = cache_dir / f"{iso3.lower()}_ppp_{year}.tif"
+    if dest.exists():
+        return dest
+
+    key = (iso3, year)
+    with _worldpop_org_download_locks_guard:
+        lock = _worldpop_org_download_locks.setdefault(key, threading.Lock())
+
+    with lock:
+        if dest.exists():  # another thread finished the download while we waited
+            return dest
+
+        url = _WORLDPOP_ORG_URL.format(year=year, iso3=iso3, iso3_lower=iso3.lower())
+        tmp = dest.with_suffix(f".{uuid.uuid4().hex}.tif.part")
+        try:
+            with requests.get(url, stream=True, timeout=600) as resp:
+                resp.raise_for_status()
+                with open(tmp, "wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                        fh.write(chunk)
+            tmp.replace(dest)  # atomic rename — readers never see a partial file
+        finally:
+            tmp.unlink(missing_ok=True)  # no-op once renamed; cleans up on any failure
+
+    return dest
+
+
+def _fetch_population_count_worldpop_org(
+    min_lon: float, min_lat: float, max_lon: float, max_lat: float, iso3: str, year: int
+) -> xr.Dataset:
+    """
+    Population COUNT clipped to a bbox, read from worldpop.org's cached
+    per-country GeoTIFF (see _worldpop_org_country_file). Same output
+    contract as the Earth Engine path in fetch_population_count: a Dataset
+    with variable 'population' in people-per-pixel, negatives/nodata clamped
+    to 0.0.
+    """
+    import rioxarray as rxr
+    import xarray as xr
+
+    path = _worldpop_org_country_file(iso3, year)
+    da = cast("xr.DataArray", rxr.open_rasterio(path, masked=True)).squeeze()
+    da = da.rio.clip_box(minx=min_lon, miny=min_lat, maxx=max_lon, maxy=max_lat)
+    values = da.values.astype(np.float64)
+    da = da.copy(data=np.where(np.isnan(values) | (values < 0), 0.0, values))
+    return xr.Dataset({"population": da.rename({"x": "lon", "y": "lat"})})
 
 
 def _collection_size(collection: ee.ImageCollection) -> int:
@@ -94,14 +205,22 @@ def _split_bbox_into_tiles(
     ]
 
 
-def fetch_population_count(aoi: ee.Geometry, scale: int, year: int = 2020) -> xr.Dataset:
+def _fetch_population_count_gee(
+    aoi: ee.Geometry,
+    scale: int,
+    year: int,
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float,
+) -> xr.Dataset:
     """
-    WorldPop GP 100 m population COUNT (people per pixel — an additive
-    quantity, not a density) for population-exposure reporting.
-
-    Deliberately separate from any domain's log-transformed pop_density ML
-    feature (e.g. disease/features.py::fetch_pop_density) — this returns raw
-    counts suitable for summing within a risk zone, never model input.
+    Population COUNT via Google Earth Engine's WorldPop/GP/100m/pop mirror —
+    the fast path (no full-country download), but with real coverage gaps:
+    verified live that for some AOIs the collection has an image for the
+    country/year, yet every pixel comes back masked over that specific AOI.
+    fetch_population_count treats that the same as an outright failure and
+    falls back to worldpop.org's own catalog (_fetch_population_count_worldpop_org).
 
     Always fetches at (up to) the native ~100 m resolution regardless of the
     requested `scale` — i.e. min(scale, 100). An earlier version of this
@@ -122,7 +241,7 @@ def fetch_population_count(aoi: ee.Geometry, scale: int, year: int = 2020) -> xr
 
     Returns Dataset with variable 'population', values in people-per-pixel,
     already masked (0.0) where WorldPop's -99999 nodata sentinel appears —
-    verified live that the GeoTIFF export does not set a GDAL/rasterio
+    verified live that the GEE GeoTIFF export does not set a GDAL/rasterio
     nodata tag (da.rio.nodata comes back None), so summing the raw array
     would otherwise corrupt totals by many orders of magnitude.
 
@@ -146,10 +265,7 @@ def fetch_population_count(aoi: ee.Geometry, scale: int, year: int = 2020) -> xr
     pop_img = _require_population_image(pop_collection, year).select("population").clip(aoi)
     fetch_scale = min(scale, _NATIVE_SCALE)
 
-    bounds_coords = cast(list, aoi.bounds().coordinates().getInfo())[0]
-    lons = [c[0] for c in bounds_coords]
-    lats = [c[1] for c in bounds_coords]
-    tiles = _split_bbox_into_tiles(min(lons), min(lats), max(lons), max(lats), fetch_scale)
+    tiles = _split_bbox_into_tiles(min_lon, min_lat, max_lon, max_lat, fetch_scale)
 
     if len(tiles) == 1:
         url = pop_img.getDownloadURL(
@@ -164,9 +280,11 @@ def fetch_population_count(aoi: ee.Geometry, scale: int, year: int = 2020) -> xr
             fetch_scale,
         )
         tile_arrays = []
-        for min_lon, min_lat, max_lon, max_lat in tiles:
+        for tile_min_lon, tile_min_lat, tile_max_lon, tile_max_lat in tiles:
             tile_region = ee.Geometry.Rectangle(
-                [min_lon, min_lat, max_lon, max_lat], proj="EPSG:4326", geodesic=False
+                [tile_min_lon, tile_min_lat, tile_max_lon, tile_max_lat],
+                proj="EPSG:4326",
+                geodesic=False,
             )
             url = pop_img.getDownloadURL(
                 {
@@ -179,6 +297,18 @@ def fetch_population_count(aoi: ee.Geometry, scale: int, year: int = 2020) -> xr
             tile_arrays.append(_download_band(url).squeeze())
         da = _merge_tiles(tile_arrays)
 
+    # A fully-masked WorldPop image over this AOI (collection has an image
+    # for the country/year, but no valid pixel intersects this specific
+    # geometry) surfaces here as every pixel being negative/NaN rather than
+    # an exception — treat it the same as a fetch failure so the caller
+    # falls back to worldpop.org instead of silently reporting ~0 people.
+    values = da.values.astype(np.float64)
+    if not np.isfinite(values).any() or np.nanmax(values) < 0:
+        raise ValueError(
+            f"Earth Engine's WorldPop mirror had no valid population pixels for {year} "
+            "over this AOI."
+        )
+
     # Population can't be negative — clamp WorldPop's unmasked -99999
     # sentinel (and any other negative noise) to 0 rather than relying on a
     # nodata tag that isn't actually present in the export.
@@ -186,8 +316,56 @@ def fetch_population_count(aoi: ee.Geometry, scale: int, year: int = 2020) -> xr
     return xr.Dataset({"population": da.rename({"x": "lon", "y": "lat"})})
 
 
+def fetch_population_count(
+    aoi: ee.Geometry, scale: int, year: int = 2020, country: str | None = None
+) -> xr.Dataset:
+    """
+    Population COUNT (people per pixel — an additive quantity, not a
+    density) for population-exposure reporting.
+
+    Primary source is Google Earth Engine's WorldPop/GP/100m/pop mirror (see
+    _fetch_population_count_gee) — fast, no full-file download. Falls back to
+    worldpop.org's own data catalog (_fetch_population_count_worldpop_org,
+    which downloads and caches the whole per-country GeoTIFF — much slower,
+    especially for large countries) whenever the GEE path fails outright, or
+    "succeeds" with no valid pixels over the AOI — verified live that this
+    happens for some countries/AOIs (e.g. parts of Uganda) even though the
+    collection has an image for that country/year. The worldpop.org fallback
+    is only attempted when `country` resolves to an ISO3 code (see
+    _resolve_iso3); if it can't be resolved, the original GEE error/emptiness
+    is raised as-is.
+
+    Deliberately separate from any domain's log-transformed pop_density ML
+    feature (e.g. disease/features.py::fetch_pop_density, which now delegates
+    here) — this returns raw counts suitable for summing within a risk zone,
+    never model input.
+    """
+    bounds_coords = cast(list, aoi.bounds().coordinates().getInfo())[0]
+    lons = [c[0] for c in bounds_coords]
+    lats = [c[1] for c in bounds_coords]
+    min_lon, min_lat, max_lon, max_lat = min(lons), min(lats), max(lons), max(lats)
+
+    try:
+        return _fetch_population_count_gee(aoi, scale, year, min_lon, min_lat, max_lon, max_lat)
+    except Exception:
+        _log.warning(
+            "Earth Engine population fetch failed or had no coverage for this AOI/year; "
+            "falling back to worldpop.org",
+            exc_info=True,
+        )
+
+    iso3 = _resolve_iso3(country)
+    if not iso3:
+        raise ValueError(
+            f"No population data was available for {year}: Earth Engine's WorldPop "
+            f"mirror had none, and country {country!r} could not be resolved to an "
+            "ISO3 code to try the worldpop.org fallback."
+        )
+    return _fetch_population_count_worldpop_org(min_lon, min_lat, max_lon, max_lat, iso3, year)
+
+
 def fetch_population_count_safe(
-    aoi: ee.Geometry, scale: int, year: int = 2020
+    aoi: ee.Geometry, scale: int, year: int = 2020, country: str | None = None
 ) -> xr.Dataset | None:
     """
     Best-effort wrapper around fetch_population_count.
@@ -199,7 +377,7 @@ def fetch_population_count_safe(
     None on any failure; callers should skip exposure reporting in that case.
     """
     try:
-        return fetch_population_count(aoi, scale=scale, year=year)
+        return fetch_population_count(aoi, scale=scale, year=year, country=country)
     except Exception:
         _log.warning(
             "Population fetch failed; population exposure stats will be omitted",

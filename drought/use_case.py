@@ -71,6 +71,7 @@ class DroughtUseCase(BaseUseCase):
             "start_year": int(config.start_date[:4]),
             "end_year": int(config.end_date[:4]),
             "gee_project": config.extra_params.get("gee_project", ""),
+            "country": config.country,
         }
 
     def preprocess(self, raw_data: dict, config: AnalysisConfig) -> dict:

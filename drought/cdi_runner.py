@@ -271,6 +271,7 @@ def run_cdi_pipeline(raw_data: dict) -> dict:
         "ndvi": ndvi,
         "bbox": bbox,
         "aoi_geojson": raw_data.get("aoi_geojson"),
+        "country": raw_data.get("country"),
         "start_year": start_year,
         "end_year": end_year,
     }
@@ -318,7 +319,11 @@ def build_drought_charts(features: dict) -> dict:
         labels = [label for label in DROUGHT_CLASS_ORDER if counts[label] > 0]
         data = [round(counts[label] / valid.size * 100, 1) for label in labels]
 
-        pop_ds = _fetch_population(features.get("aoi_geojson")) if ds is not None else None
+        pop_ds = (
+            _fetch_population(features.get("aoi_geojson"), features.get("country"))
+            if ds is not None
+            else None
+        )
         if pop_ds is not None and ds is not None:
             # Classify the full 2D grid, explicitly transposed to (lat, lon)
             # order — ds["CDI"]'s raw array is (lon, lat) (see
@@ -460,7 +465,7 @@ def _mask_dataset_water_bodies(ds, aoi_geojson: dict | None):
     return ds.where(~water_mask)
 
 
-def _fetch_population(aoi_geojson: dict | None) -> xr.Dataset | None:
+def _fetch_population(aoi_geojson: dict | None, country: str | None = None) -> xr.Dataset | None:
     """
     Fetch WorldPop population counts (native ~100 m resolution — never
     aligned/downsampled onto the CDI grid) for population-exposure reporting
@@ -487,7 +492,7 @@ def _fetch_population(aoi_geojson: dict | None) -> xr.Dataset | None:
         _log.warning("Could not build ee.Geometry for population fetch", exc_info=True)
         return None
 
-    return fetch_population_count_safe(aoi, scale=1000)
+    return fetch_population_count_safe(aoi, scale=1000, country=country)
 
 
 def _mask_dataset_to_aoi(ds, aoi_geojson: dict | None):

@@ -457,7 +457,9 @@ def build_feature_datasets(aoi: ee.Geometry, config: dict) -> dict[str, xr.Datas
             # Raw population COUNT for exposure reporting (population within
             # medium/high/very-high risk zones). Best-effort — see
             # core.population.fetch_population_count_safe.
-            "population_count": lambda: fetch_population_count_safe(aoi, scale=scale),
+            "population_count": lambda: fetch_population_count_safe(
+                aoi, scale=scale, country=config.get("country")
+            ),
         }
     )
 
