@@ -1,6 +1,6 @@
 [project]
 name = "climate-change"
-version = "1.1.11"
+version = "1.1.12"
 description = "Climate Resilience and Adaptation Decision Support System — multi-hazard EO analysis (drought, flood, food security, disease, land degradation)"
 readme = "README.md"
 license = "MIT"
@@ -41,6 +41,7 @@ dependencies = [
     "openai>=1.0",
     "pandas>=2.0",
     "Pillow>=10.0",
+    "pycountry>=24.6.1",
     "python-dotenv>=1.0",
     "rasterio>=1.3",
     "reportlab>=4.0",

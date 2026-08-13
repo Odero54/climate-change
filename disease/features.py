@@ -73,20 +73,6 @@ def _require_images(
     return collection
 
 
-def _require_population_image(collection: ee.ImageCollection, year: int) -> ee.Image:
-    """
-    Guard against an empty WorldPop filter result. Calling `.first()` on an empty
-    collection silently yields a bandless image — every downstream `.select()` on
-    it then returns an all-masked band, so `.sample()` drops the property entirely
-    for every sampled point (rather than raising or producing NaNs). That surfaces
-    much later as a confusing pandas KeyError instead of a clear data-availability
-    error, so we fail fast here instead.
-    """
-    if _collection_size(collection) == 0:
-        raise ValueError(f"No WorldPop population data was available for {year}.")
-    return collection.first()
-
-
 def _sentinel2_mndwi_collection(aoi: ee.Geometry, start: str, end: str) -> ee.ImageCollection:
     def _add_mndwi(img: ee.Image) -> ee.Image:
         return (
@@ -194,23 +180,27 @@ def fetch_elevation(aoi: ee.Geometry, scale: int = 1000) -> xr.Dataset:
     return xr.Dataset({"elevation": da.rename({"x": "lon", "y": "lat"})})
 
 
-def fetch_pop_density(aoi: ee.Geometry, year: int = 2020, scale: int = 1000) -> xr.Dataset:
+def fetch_pop_density(
+    aoi: ee.Geometry, year: int = 2020, scale: int = 1000, country: str | None = None
+) -> xr.Dataset:
     """
-    WorldPop GP 100 m population density, log-transformed: log(1 + pop).
-    Returns Dataset with variable 'pop_density'.
+    Population density, log-transformed: log(1 + pop). Returns Dataset with
+    variable 'pop_density'.
+
+    Delegates to core.population.fetch_population_count for the underlying
+    count raster (Earth Engine's WorldPop mirror primary, worldpop.org's own
+    catalog as fallback — see that function's docstring) rather than querying
+    GEE directly, so this feature benefits from the same fallback and doesn't
+    duplicate the WorldPop query logic. Deliberately not wrapped in
+    fetch_population_count_safe: pop_density is a required FEATURE_COLS
+    entry, so a total fetch failure (both sources unavailable) should
+    propagate rather than silently produce an incomplete training set.
     """
-    pop_collection = (
-        ee.ImageCollection("WorldPop/GP/100m/pop")
-        .filterBounds(aoi)
-        .filter(ee.Filter.eq("year", year))
-    )
-    pop_raw = _require_population_image(pop_collection, year).select("population").clip(aoi)
-    pop_log = pop_raw.add(1).log().rename("pop_density")
-    url = pop_log.getDownloadURL(
-        {"region": aoi, "scale": scale, "crs": "EPSG:4326", "format": "GEO_TIFF"}
-    )
-    da = _download_band(url).squeeze()
-    return xr.Dataset({"pop_density": da.rename({"x": "lon", "y": "lat"})})
+    from climate_change.core.population import fetch_population_count
+
+    pop_ds = fetch_population_count(aoi, scale=scale, year=year, country=country)
+    log_da = np.log1p(pop_ds["population"]).rename("pop_density")
+    return xr.Dataset({"pop_density": log_da})
 
 
 def fetch_ndvi_mean(
@@ -286,23 +276,37 @@ def build_feature_datasets(aoi: ee.Geometry, config: dict) -> dict[str, xr.Datas
             "temperature": lambda: fetch_lst_mean(aoi, start, end, scale=scale),
             "ndwi": lambda: fetch_ndwi(aoi, start, end, scale=scale),
             "elevation": lambda: fetch_elevation(aoi, scale=scale),
-            "population": lambda: fetch_pop_density(aoi, scale=scale),
+            "population": lambda: fetch_pop_density(
+                aoi, scale=scale, country=config.get("country")
+            ),
             "ndvi": lambda: fetch_ndvi_mean(aoi, start, end, scale=scale),
             "landcover": lambda: fetch_landcover(aoi, scale=scale),
             # Raw population COUNT for exposure reporting (population within
             # medium/high risk zones) — distinct from "population" above,
             # which is log-transformed for the ML feature and unsuitable for
             # summing. See core.population.fetch_population_count.
-            "population_count": lambda: fetch_population_count_safe(aoi, scale=scale),
+            "population_count": lambda: fetch_population_count_safe(
+                aoi, scale=scale, country=config.get("country")
+            ),
         }
     )
 
 
 def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
     """
-    Assemble the 7-band GEE image used for stratified pixel sampling.
-    Band order matches FEATURE_COLS. geometries=True preserved in sampling
+    Assemble the 6-band GEE image used for stratified pixel sampling
+    (FEATURE_COLS minus pop_density). geometries=True preserved in sampling
     call so centroids are available for DBSCAN hotspot detection.
+
+    pop_density is deliberately not part of this GEE stack: it's joined into
+    the sampled points afterwards, by nearest-neighbour lookup against the
+    Earth-Engine-primary/worldpop.org-fallback raster already fetched by
+    build_feature_datasets — see sample_training_data. It used to be merged
+    in here as a seventh GEE band (WorldPop/GP/100m/pop), but that GEE
+    mirror has coverage gaps for some countries/AOIs (verified live for
+    parts of Uganda), which surfaced as a "No data was available for:
+    population density" error from sample_training_data even though the
+    other six bands sampled fine.
     """
     start = config.get("start_date", "2021-01-01")
     end = config.get("end_date", "2023-12-31")
@@ -352,21 +356,6 @@ def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
     # SRTM elevation
     elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").clip(aoi)
 
-    # WorldPop log(1 + pop)
-    pop_collection = (
-        ee.ImageCollection("WorldPop/GP/100m/pop")
-        .filterBounds(aoi)
-        .filter(ee.Filter.eq("year", 2020))
-    )
-    pop_density = (
-        _require_population_image(pop_collection, 2020)
-        .select("population")
-        .add(1)
-        .log()
-        .rename("pop_density")
-        .clip(aoi)
-    )
-
     # MODIS NDVI mean
     def _scale_ndvi(img: ee.Image) -> ee.Image:
         return img.multiply(0.0001).copyProperties(img, ["system:time_start"])
@@ -394,7 +383,7 @@ def build_gee_feature_stack(aoi: ee.Geometry, config: dict) -> ee.Image:
         .reproject("EPSG:4326", None, scale)
     )
 
-    stack = ee.Image.cat([rain_4w, temp_mean, ndwi, elevation, pop_density, ndvi, land_cover])
+    stack = ee.Image.cat([rain_4w, temp_mean, ndwi, elevation, ndvi, land_cover])
     # Exclude permanent water bodies from feature preparation/sampling — disease
     # risk is a property of inhabited/inhabitable land, not open water.
     valid_land = exclusion_mask(aoi, [WATER_CLASS])
@@ -530,17 +519,25 @@ def _compute_risk_score(df: pd.DataFrame) -> np.ndarray:
 def sample_training_data(
     feature_stack: ee.Image,
     aoi: ee.Geometry,
+    pop_density_da: xr.DataArray,
     n_pixels: int = 3000,
     scale: int = 1000,
     seed: int = 42,
 ) -> pd.DataFrame:
     """
-    Sample n_pixels from the GEE feature stack and assign 3-class disease risk labels.
-    Labels: fixed absolute thresholds on the composite risk score (0-100 scale).
+    Sample n_pixels from the 6-band GEE feature stack, join in pop_density by
+    nearest-neighbour lookup against pop_density_da, and assign 3-class
+    disease risk labels. Labels: fixed absolute thresholds on the composite
+    risk score (0-100 scale).
       0 = Low Risk    (score < 33)
       1 = Medium Risk (33 <= score < 66)
       2 = High Risk   (score >= 66)
     Returns DataFrame with FEATURE_COLS + ['lon', 'lat', 'risk_score', 'label'].
+
+    pop_density_da (from build_feature_datasets's "population" fetch — see
+    fetch_pop_density) is sampled at each point separately from the other six
+    features rather than being merged into feature_stack itself as a GEE
+    band — see build_gee_feature_stack's docstring for why.
     """
     samples = feature_stack.sample(
         region=aoi,
@@ -567,6 +564,17 @@ def sample_training_data(
             for f in sample_list
         ]
     )
+
+    raw_df["pop_density"] = np.nan
+    has_coords = raw_df["lon"].notna() & raw_df["lat"].notna()
+    if has_coords.any():
+        located = raw_df.loc[has_coords]
+        points_lon = xr.DataArray(located["lon"].to_numpy(dtype=float), dims="points")
+        points_lat = xr.DataArray(located["lat"].to_numpy(dtype=float), dims="points")
+        raw_df.loc[has_coords, "pop_density"] = pop_density_da.sel(
+            lon=points_lon, lat=points_lat, method="nearest"
+        ).values
+
     # A band whose pixels are entirely masked over this AOI (e.g. a data-source
     # gap) never appears as a property on any sampled point, so the column is
     # absent altogether rather than merely NaN — dropna(subset=...) would raise
