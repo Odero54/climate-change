@@ -189,7 +189,10 @@ class TestSampleTrainingDataGuards:
         this AOI), but sample_training_data must still succeed by joining it
         in from pop_density_da instead of requiring it as a GEE property."""
         features = [
-            _feature({k: v for k, v in _full_properties().items() if k != "pop_density"}, lon=30.0 + i * 0.01)
+            _feature(
+                {k: v for k, v in _full_properties().items() if k != "pop_density"},
+                lon=30.0 + i * 0.01,
+            )
             for i in range(10)
         ]
         stack = _FakeFeatureStack(features)

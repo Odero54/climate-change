@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import logging
 import math
+import threading
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -58,6 +60,10 @@ def _resolve_iso3(country: str | None) -> str | None:
     return matches[0].alpha_3 if matches else None
 
 
+_worldpop_org_download_locks: dict[tuple[str, int], threading.Lock] = {}
+_worldpop_org_download_locks_guard = threading.Lock()
+
+
 def _worldpop_org_country_file(iso3: str, year: int) -> Path:
     """
     Download (once) and cache worldpop.org's per-country population GeoTIFF.
@@ -70,6 +76,17 @@ def _worldpop_org_country_file(iso3: str, year: int) -> Path:
     file (roughly 110 MB-1.2+ GB depending on country size) is downloaded
     once and cached under core.cache.CACHE_DIR, keyed by iso3/year, and
     reused by every later request for that country/year.
+
+    Callers within the same process for the same (iso3, year) — e.g.
+    disease/features.py fetches pop_density and the raw population count
+    concurrently in different threads — serialize on a per-key lock rather
+    than racing to download: verified live that two threads downloading to
+    the same fixed ".tif.part" name crashed with a FileNotFoundError when
+    one thread's rename beat the other's. The temp filename is also made
+    unique per download attempt (uuid4) as a second layer of protection
+    against the same race across separate processes, where the in-process
+    lock doesn't apply — os.replace onto the same `dest` is still atomic
+    regardless of which attempt wins.
     """
     from climate_change.core.cache import CACHE_DIR
 
@@ -79,14 +96,26 @@ def _worldpop_org_country_file(iso3: str, year: int) -> Path:
     if dest.exists():
         return dest
 
-    url = _WORLDPOP_ORG_URL.format(year=year, iso3=iso3, iso3_lower=iso3.lower())
-    tmp = dest.with_suffix(".tif.part")
-    with requests.get(url, stream=True, timeout=600) as resp:
-        resp.raise_for_status()
-        with open(tmp, "wb") as fh:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                fh.write(chunk)
-    tmp.replace(dest)  # atomic rename — concurrent callers never see a partial file
+    key = (iso3, year)
+    with _worldpop_org_download_locks_guard:
+        lock = _worldpop_org_download_locks.setdefault(key, threading.Lock())
+
+    with lock:
+        if dest.exists():  # another thread finished the download while we waited
+            return dest
+
+        url = _WORLDPOP_ORG_URL.format(year=year, iso3=iso3, iso3_lower=iso3.lower())
+        tmp = dest.with_suffix(f".{uuid.uuid4().hex}.tif.part")
+        try:
+            with requests.get(url, stream=True, timeout=600) as resp:
+                resp.raise_for_status()
+                with open(tmp, "wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                        fh.write(chunk)
+            tmp.replace(dest)  # atomic rename — readers never see a partial file
+        finally:
+            tmp.unlink(missing_ok=True)  # no-op once renamed; cleans up on any failure
+
     return dest
 
 
@@ -317,9 +346,7 @@ def fetch_population_count(
     min_lon, min_lat, max_lon, max_lat = min(lons), min(lats), max(lons), max(lats)
 
     try:
-        return _fetch_population_count_gee(
-            aoi, scale, year, min_lon, min_lat, max_lon, max_lat
-        )
+        return _fetch_population_count_gee(aoi, scale, year, min_lon, min_lat, max_lon, max_lat)
     except Exception:
         _log.warning(
             "Earth Engine population fetch failed or had no coverage for this AOI/year; "

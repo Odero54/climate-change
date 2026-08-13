@@ -222,9 +222,7 @@ class DiseaseRiskUseCase(BaseUseCase):
             timeseries = f_ts.result()
 
         pop_density_da = datasets["population"]["pop_density"]
-        df = sample_training_data(
-            feature_stack, aoi, pop_density_da, n_pixels=n_pix, scale=scale
-        )
+        df = sample_training_data(feature_stack, aoi, pop_density_da, n_pixels=n_pix, scale=scale)
         return {
             "datasets": datasets,
             "training_df": df,
