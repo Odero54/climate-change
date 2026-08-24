@@ -159,7 +159,7 @@ def _label_window(config: dict) -> tuple[str, str]:
 
 
 # Individual band fetchers
-def fetch_terrain(aoi: ee.Geometry, scale: int = 90) -> xr.Dataset:
+def fetch_terrain(aoi: ee.Geometry, scale: int = 1000) -> xr.Dataset:
     """
     Download SRTM elevation from GEE.
     Returns Dataset with variable 'elevation' and (lat, lon) coords.
@@ -199,7 +199,7 @@ def fetch_sar_change(
     pre_end: str,
     flood_start: str,
     flood_end: str,
-    scale: int = 90,
+    scale: int = 1000,
 ) -> xr.Dataset:
     """
     Compute Sentinel-1 VV backscatter change (pre − flood).
@@ -264,7 +264,7 @@ def fetch_landcover(aoi: ee.Geometry, scale: int = 100) -> xr.Dataset:
     return xr.Dataset({"Map": da.rename({"x": "lon", "y": "lat"})})
 
 
-def fetch_dist_river(aoi: ee.Geometry, scale: int = 90) -> xr.Dataset:
+def fetch_dist_river(aoi: ee.Geometry, scale: int = 1000) -> xr.Dataset:
     """
     Compute Euclidean distance to permanent water (JRC occurrence ≥ 70 %).
     Returns Dataset with variable 'dist_river' in metres.
@@ -285,7 +285,7 @@ def fetch_mndwi(
     aoi: ee.Geometry,
     start_date: str,
     end_date: str,
-    scale: int = 90,
+    scale: int = 1000,
 ) -> xr.Dataset:
     """
     Compute Sentinel-2 MNDWI = (Green − SWIR1) / (Green + SWIR1).
@@ -419,7 +419,7 @@ def build_feature_datasets(aoi: ee.Geometry, config: dict) -> dict[str, xr.Datas
     from climate_change.core.dask_engine import DaskEngine
     from climate_change.core.population import fetch_population_count_safe
 
-    scale = config.get("scale", 90)
+    scale = config.get("scale", 1000)
     pre_start, pre_end = _pre_flood_window(config)
     post_start, post_end = _post_flood_window(config)
     rain_7d_start, rain_7d_end = _rain_7d_window(config)
@@ -490,7 +490,7 @@ def sample_training_data(
     aoi: ee.Geometry,
     config: dict,
     n_pixels: int = 5000,
-    scale: int = 90,
+    scale: int = 1000,
     seed: int = 42,
 ) -> pd.DataFrame:
     """

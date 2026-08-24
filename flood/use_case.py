@@ -71,7 +71,7 @@ class FloodRiskUseCase(BaseUseCase):
       "flood_label_start":"2021-01-01",  "flood_label_end":"2021-12-31",
       # Sampling
       "n_pixels": 3000,
-      "scale":    90,
+      "scale":    1000,
     }
     """
 
@@ -239,7 +239,7 @@ class FloodRiskUseCase(BaseUseCase):
         aoi = raw_data["aoi"]
         cfg = raw_data["config"]
         n_pix = cfg.get("n_pixels", 5000)
-        scale = cfg.get("scale", 90)
+        scale = cfg.get("scale", 1000)
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             f_datasets = pool.submit(build_feature_datasets, aoi, cfg)
