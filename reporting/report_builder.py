@@ -534,6 +534,86 @@ class ReportBuilder:
         ],
     }
 
+    # Curated, plain-language subset of `output.stats` shown in the "Key
+    # Statistics" section — ordered (stats key, label) pairs, one list per
+    # module. A key missing from the module's actual stats (e.g. an older
+    # cached result computed before a field was added) is simply skipped,
+    # not shown as blank. Deliberately excludes model-internal fields
+    # (per-model F1/AUC/accuracy, CV scores, thresholds) already covered by
+    # the "Model Performance Comparison" section, and generic technical
+    # fields (model_type, n_pixels_sampled, run_duration_s, country) that
+    # don't belong in a decision-maker-facing summary.
+    _STATS_FIELDS: dict[str, list[tuple[str, str]]] = {
+        "flood": [
+            ("flooded_pct", "Area currently flooded"),
+            ("very_high_risk_pct", "Area at very high risk"),
+            ("high_risk_pct", "Area at high risk"),
+            ("medium_risk_pct", "Area at medium risk"),
+            ("low_risk_pct", "Area at low risk"),
+            ("top_flood_driver", "Main driver of flood risk"),
+            ("high_uncertainty_pct", "Area needing field verification"),
+            ("total_population", "People living in the area"),
+            ("population_affected", "People at risk"),
+            ("total_area_ha", "Area covered"),
+        ],
+        "food_security": [
+            ("vhi_mean", "Overall vegetation health (0-100)"),
+            ("vci_mean", "Vegetation condition (0-100)"),
+            ("tci_mean", "Temperature condition (0-100)"),
+            ("high_risk_pct", "Area at high risk"),
+            ("medium_risk_pct", "Area at medium risk"),
+            ("low_risk_pct", "Area at low risk"),
+            ("top_driver", "Main driver of food insecurity"),
+            ("total_population", "People living in the area"),
+            ("population_affected", "People at risk"),
+            ("total_area_ha", "Area covered"),
+        ],
+        "disease": [
+            ("high_risk_pct", "Area at high risk"),
+            ("n_hotspot_clusters", "Disease hotspot clusters found"),
+            ("top_driver", "Main driver of disease risk"),
+            ("total_population", "People living in the area"),
+            ("population_affected", "People at risk"),
+            ("total_area_ha", "Area covered"),
+        ],
+        "land_degradation": [
+            ("degraded_label_pct", "Area currently degraded"),
+            ("ndvi_trend_per_year", "Vegetation trend (per year)"),
+            ("mk_significant", "Trend is statistically significant"),
+            ("top_degradation_driver", "Main driver of land degradation"),
+            ("total_population", "People living in the area"),
+            ("population_affected", "People at risk"),
+        ],
+        "drought": [
+            ("mean_cdi", "Average drought index"),
+            ("latest_mean_cdi", "Most recent drought index"),
+            ("extreme_pct", "Area in extreme drought"),
+            ("severe_pct", "Area in severe drought"),
+            ("moderate_pct", "Area in moderate drought"),
+            ("mild_pct", "Area in mild drought"),
+            ("near_normal_pct", "Area near normal"),
+            ("total_population", "People living in the area"),
+            ("population_affected", "People affected by drought"),
+            ("total_area_ha", "Area covered"),
+        ],
+    }
+
+    @staticmethod
+    def _format_stat_value(key: str, value: Any) -> str:
+        if value is None:
+            return "Not available"
+        if isinstance(value, bool):
+            return "Yes" if value else "No"
+        if key.endswith("_pct"):
+            return f"{value:g}%"
+        if key in ("total_population", "population_affected"):
+            return f"{value:,.0f}"
+        if key == "total_area_ha":
+            return f"{value:,.1f} ha"
+        if isinstance(value, float):
+            return f"{value:g}"
+        return str(value)
+
     def _raster_source(self, output: AnalysisOutput) -> str | None:
         raster = output.raster_path or output.metadata.get("raster")
         if not raster:
@@ -984,13 +1064,29 @@ class ReportBuilder:
         buf.seek(0)
         return buf.read()
 
+    def _stats_rows(self, output: AnalysisOutput) -> list[list[str]]:
+        """Selects, relabels, and formats the curated subset of output.stats
+        shown in the "Key Statistics" section — see _STATS_FIELDS."""
+        stats = output.stats
+        fields = self._STATS_FIELDS.get(output.module, [])
+        rows = [
+            [label, self._format_stat_value(key, stats[key])]
+            for key, label in fields
+            if key in stats
+        ]
+        if not rows:
+            # Unknown module, or a cached result missing every curated key
+            # (e.g. computed before this module's curation list existed) —
+            # fall back to the raw dump rather than showing an empty table.
+            rows = [[k.replace("_", " ").title(), str(v)] for k, v in stats.items()]
+        return rows
+
     def _add_statistics_section(self, story: list, output: AnalysisOutput) -> None:
         S = self._styles
         self._add_rule(story)
         story.append(Paragraph("3. Key Statistics", S["section_heading"]))
 
-        stats = output.stats
-        rows = [[k.replace("_", " ").title(), str(v)] for k, v in stats.items()]
+        rows = self._stats_rows(output)
         tbl = Table(rows, colWidths=[8 * cm, 7 * cm])
         tbl.setStyle(
             TableStyle(

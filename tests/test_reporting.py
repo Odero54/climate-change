@@ -190,3 +190,142 @@ class TestPopulationExposureSection:
             chart_title="title",
         )
         assert len(story) > 0
+
+
+class TestStatsRows:
+    """The "Key Statistics" section shows a curated, per-module, plain-
+    language subset of output.stats — not every raw key (model-internal
+    F1/AUC/CV/threshold fields are covered by the separate "Model
+    Performance Comparison" section instead)."""
+
+    def _builder(self) -> ReportBuilder:
+        builder = ReportBuilder.__new__(ReportBuilder)
+        builder._styles = _styles()
+        return builder
+
+    def test_food_security_shows_plain_labels_not_raw_keys(self):
+        output = AnalysisOutput(
+            module="food_security",
+            geojson={},
+            raster_path=None,
+            stats={
+                "model_type": "rf",
+                "n_pixels_sampled": 598,
+                "rf_cv_f1": 0.8745,
+                "rf_f1": 0.4979,
+                "rf_accuracy": 0.9917,
+                "xgb_cv_f1": 0.7489,
+                "ensemble_f1": 0.4979,
+                "selected_f1": 0.4979,
+                "high_risk_pct": 0.0,
+                "medium_risk_pct": 0.7,
+                "low_risk_pct": 99.3,
+                "top_driver": "ndvi_slope",
+                "vci_mean": 76.5,
+                "tci_mean": 86.3,
+                "vhi_mean": 81.4,
+                "total_population": 200498.7,
+                "population_affected": 428.2,
+                "total_area_ha": 60787.1,
+                "country": "Kenya",
+                "run_duration_s": 19.5,
+            },
+            shap=None,
+            charts={},
+            metadata={},
+        )
+        rows = self._builder()._stats_rows(output)
+        labels = [r[0] for r in rows]
+        by_label = dict(rows)
+
+        # Model-internal and generic technical fields must not appear.
+        for excluded in (
+            "Model Type",
+            "N Pixels Sampled",
+            "Rf Cv F1",
+            "Rf F1",
+            "Rf Accuracy",
+            "Xgb Cv F1",
+            "Ensemble F1",
+            "Selected F1",
+            "Country",
+            "Run Duration S",
+        ):
+            assert excluded not in labels
+
+        # Curated fields render with plain labels and formatted values.
+        assert by_label["Overall vegetation health (0-100)"] == "81.4"
+        assert by_label["Area at high risk"] == "0%"
+        assert by_label["Area at low risk"] == "99.3%"
+        assert by_label["Main driver of food insecurity"] == "ndvi_slope"
+        assert by_label["People living in the area"] == "200,499"
+        assert by_label["People at risk"] == "428"
+        assert by_label["Area covered"] == "60,787.1 ha"
+
+    def test_flood_curated_fields(self):
+        output = AnalysisOutput(
+            module="flood",
+            geojson={},
+            raster_path=None,
+            stats={
+                "flooded_pct": 12.3,
+                "very_high_risk_pct": 4.0,
+                "high_risk_pct": 8.0,
+                "top_flood_driver": "vv_change",
+                "mean_spread": 0.05,
+                "spread_stats": {"min": 0.0, "max": 0.3},
+            },
+            shap=None,
+            charts={},
+            metadata={},
+        )
+        rows = self._builder()._stats_rows(output)
+        by_label = dict(rows)
+        assert by_label["Area currently flooded"] == "12.3%"
+        assert by_label["Main driver of flood risk"] == "vv_change"
+        # Nested/non-curated fields (spread_stats, mean_spread) are omitted.
+        assert "Spread Stats" not in by_label
+        assert "Mean Spread" not in by_label
+
+    def test_missing_curated_keys_falls_back_to_raw_dump(self):
+        """A module with none of its curated keys present (e.g. an old
+        cached result, or an unrecognised module) still shows something
+        rather than an empty table."""
+        output = AnalysisOutput(
+            module="food_security",
+            geojson={},
+            raster_path=None,
+            stats={"some_future_field": 1.0},
+            shap=None,
+            charts={},
+            metadata={},
+        )
+        rows = self._builder()._stats_rows(output)
+        assert rows == [["Some Future Field", "1.0"]]
+
+    def test_none_value_renders_as_not_available(self):
+        output = AnalysisOutput(
+            module="land_degradation",
+            geojson={},
+            raster_path=None,
+            stats={"ndvi_trend_per_year": None, "degraded_label_pct": 10.0},
+            shap=None,
+            charts={},
+            metadata={},
+        )
+        rows = self._builder()._stats_rows(output)
+        by_label = dict(rows)
+        assert by_label["Vegetation trend (per year)"] == "Not available"
+
+    def test_boolean_value_renders_as_yes_no(self):
+        output = AnalysisOutput(
+            module="land_degradation",
+            geojson={},
+            raster_path=None,
+            stats={"mk_significant": True},
+            shap=None,
+            charts={},
+            metadata={},
+        )
+        rows = self._builder()._stats_rows(output)
+        assert dict(rows)["Trend is statistically significant"] == "Yes"
