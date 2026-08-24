@@ -1,6 +1,6 @@
 [project]
 name = "climate-change"
-version = "1.1.13"
+version = "1.1.14"
 description = "Climate Resilience and Adaptation Decision Support System — multi-hazard EO analysis (drought, flood, food security, disease, land degradation)"
 readme = "README.md"
 license = "MIT"
