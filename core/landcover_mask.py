@@ -3,8 +3,9 @@ from __future__ import annotations
 import io
 from typing import TYPE_CHECKING, cast
 
-import requests
 from requests import HTTPError
+
+from climate_change.core.http import get_with_retry
 
 if TYPE_CHECKING:
     import ee
@@ -54,7 +55,7 @@ def fetch_landcover_class_array(aoi_geojson: dict, scale: int = 100) -> xr.DataA
         {"region": aoi, "scale": scale, "crs": "EPSG:4326", "format": "GEO_TIFF"}
     )
 
-    resp = requests.get(url, timeout=600)
+    resp = get_with_retry(url, timeout=600)
     try:
         resp.raise_for_status()
     except HTTPError as exc:
