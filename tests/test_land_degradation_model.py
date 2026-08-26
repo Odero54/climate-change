@@ -11,6 +11,7 @@ from sklearn.model_selection import train_test_split
 from climate_change.land_degradation.features import DEGRADATION_CLASSES, FEATURE_COLS
 from climate_change.land_degradation.model import (
     VALID_MODEL_TYPES,
+    LandDegradationModel,
     _safe_cv_folds,
     _safe_stratify,
     build_degradation_charts,
@@ -254,3 +255,79 @@ class TestBuildDegradationCharts:
     def test_valid_model_types(self):
         for mt in ("rf", "lgbm", "ensemble"):
             assert mt in VALID_MODEL_TYPES
+
+
+# ── evaluate_models: single-model selection ────────────────────────────────────
+
+
+class TestEvaluateModelsSingleModel:
+    def test_rf_none_omits_rf_and_ensemble_keys(self, trained_land_models):
+        _, lgbm, X_te, y_te = trained_land_models
+        result = evaluate_models(None, lgbm, X_te, y_te)
+        assert "rf" not in result
+        assert "ensemble" not in result
+        assert "lgbm" in result
+
+    def test_lgbm_none_omits_lgbm_and_ensemble_keys(self, trained_land_models):
+        rf, _, X_te, y_te = trained_land_models
+        result = evaluate_models(rf, None, X_te, y_te)
+        assert "lgbm" not in result
+        assert "ensemble" not in result
+        assert "rf" in result
+
+
+# ── LandDegradationModel.predict: single-model selection trains only that model ─
+
+
+@pytest.fixture()
+def degradation_training_df():
+    rng = np.random.default_rng(4)
+    n = 60
+    df = pd.DataFrame({col: rng.standard_normal(n) for col in FEATURE_COLS})
+    deg_class = np.zeros(n, dtype=int)
+    deg_class[:30] = 1
+    df["deg_class"] = deg_class
+    df["deg_score"] = rng.standard_normal(n)
+    df["lon"] = rng.uniform(30, 31, n)
+    df["lat"] = rng.uniform(-1, 0, n)
+    return df
+
+
+@pytest.fixture()
+def degradation_ndvi_annual():
+    return pd.Series([0.4, 0.45, 0.5, 0.48], index=[2020, 2021, 2022, 2023])
+
+
+class TestLandDegradationModelPredictSingleModel:
+    def test_rf_only_never_trains_lgbm(self, degradation_training_df, degradation_ndvi_annual):
+        model = LandDegradationModel()
+        result = model.predict(
+            degradation_training_df, degradation_ndvi_annual, {"model_type": "rf"}
+        )
+        assert model.rf is not None
+        assert model.lgbm is None
+        assert result["stats"]["lgbm_f1"] is None
+        assert result["stats"]["lgbm_accuracy"] is None
+        assert result["stats"]["ensemble_f1"] is None
+
+    def test_lgbm_only_never_trains_rf(self, degradation_training_df, degradation_ndvi_annual):
+        model = LandDegradationModel()
+        result = model.predict(
+            degradation_training_df, degradation_ndvi_annual, {"model_type": "lgbm"}
+        )
+        assert model.lgbm is not None
+        assert model.rf is None
+        assert result["stats"]["rf_f1"] is None
+        assert result["stats"]["rf_accuracy"] is None
+        assert result["stats"]["ensemble_f1"] is None
+
+    def test_ensemble_trains_both(self, degradation_training_df, degradation_ndvi_annual):
+        model = LandDegradationModel()
+        result = model.predict(
+            degradation_training_df, degradation_ndvi_annual, {"model_type": "ensemble"}
+        )
+        assert model.rf is not None
+        assert model.lgbm is not None
+        assert result["stats"]["rf_f1"] is not None
+        assert result["stats"]["lgbm_f1"] is not None
+        assert result["stats"]["ensemble_f1"] is not None

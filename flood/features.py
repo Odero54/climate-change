@@ -7,12 +7,12 @@ from typing import cast
 import ee
 import numpy as np
 import pandas as pd
-import requests
 import rioxarray as rxr
 import xarray as xr
 from requests import HTTPError
 from xarray.core.types import InterpOptions
 
+from climate_change.core.http import get_with_retry
 from climate_change.core.landcover_mask import WATER_CLASS, exclusion_mask
 
 FEATURE_COLS: list[str] = [
@@ -588,7 +588,7 @@ def _sample_labeled_pixels(
 
 def _download_band(url: str, timeout: int = 600) -> xr.DataArray:
     """GET a GEE download URL and return a rioxarray DataArray."""
-    resp = requests.get(url, timeout=timeout)
+    resp = get_with_retry(url, timeout=timeout)
     try:
         resp.raise_for_status()
     except HTTPError as exc:

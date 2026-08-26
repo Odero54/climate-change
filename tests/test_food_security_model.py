@@ -9,6 +9,7 @@ from xgboost import Booster, DMatrix
 from climate_change.food_security.features import FEATURE_COLS, FOOD_CLASSES
 from climate_change.food_security.model import (
     VALID_MODEL_TYPES,
+    FoodSecurityModel,
     _safe_cv_folds,
     _safe_stratify,
     build_food_security_charts,
@@ -198,3 +199,79 @@ class TestBuildFoodSecurityCharts:
     def test_valid_model_types(self):
         for mt in ("rf", "xgboost", "ensemble"):
             assert mt in VALID_MODEL_TYPES
+
+
+# ── evaluate_models: single-model selection ────────────────────────────────────
+
+
+class TestEvaluateModelsSingleModel:
+    def test_rf_none_omits_rf_and_ensemble_keys(self, trained_food_models):
+        _, xgb, X_te, y_te = trained_food_models
+        result = evaluate_models(None, xgb, X_te, y_te)
+        assert "rf" not in result
+        assert "ensemble" not in result
+        assert "xgb" in result
+
+    def test_xgb_none_omits_xgb_and_ensemble_keys(self, trained_food_models):
+        rf, _, X_te, y_te = trained_food_models
+        result = evaluate_models(rf, None, X_te, y_te)
+        assert "xgb" not in result
+        assert "ensemble" not in result
+        assert "rf" in result
+
+
+# ── FoodSecurityModel.predict: single-model selection trains only that model ───
+
+
+@pytest.fixture()
+def food_security_training_df():
+    rng = np.random.default_rng(5)
+    n = 60
+    df = pd.DataFrame(
+        {
+            "vci": rng.uniform(0, 100, n),
+            "tci": rng.uniform(0, 100, n),
+            "rainfall_anom_pct": rng.standard_normal(n),
+            "ndvi_slope": rng.standard_normal(n),
+            "mndwi": rng.standard_normal(n),
+            "slope_terrain": rng.uniform(0, 30, n),
+            "land_cover": rng.standard_normal(n),
+            "lon": rng.uniform(30, 31, n),
+            "lat": rng.uniform(-1, 0, n),
+        }
+    )
+    label = np.zeros(n, dtype=int)
+    label[20:40] = 1
+    label[40:] = 2
+    df["label"] = label
+    df["food_score"] = rng.standard_normal(n)
+    return df
+
+
+class TestFoodSecurityModelPredictSingleModel:
+    def test_rf_only_never_trains_xgb(self, food_security_training_df):
+        model = FoodSecurityModel()
+        result = model.predict(food_security_training_df, config={"model_type": "rf"})
+        assert model.rf is not None
+        assert model.xgb is None
+        assert result["stats"]["xgb_f1"] is None
+        assert result["stats"]["xgb_accuracy"] is None
+        assert result["stats"]["ensemble_f1"] is None
+
+    def test_xgboost_only_never_trains_rf(self, food_security_training_df):
+        model = FoodSecurityModel()
+        result = model.predict(food_security_training_df, config={"model_type": "xgboost"})
+        assert model.xgb is not None
+        assert model.rf is None
+        assert result["stats"]["rf_f1"] is None
+        assert result["stats"]["rf_accuracy"] is None
+        assert result["stats"]["ensemble_f1"] is None
+
+    def test_ensemble_trains_both(self, food_security_training_df):
+        model = FoodSecurityModel()
+        result = model.predict(food_security_training_df, config={"model_type": "ensemble"})
+        assert model.rf is not None
+        assert model.xgb is not None
+        assert result["stats"]["rf_f1"] is not None
+        assert result["stats"]["xgb_f1"] is not None
+        assert result["stats"]["ensemble_f1"] is not None

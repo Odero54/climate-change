@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
-import requests
 from requests import HTTPError
+
+from climate_change.core.http import get_with_retry
 
 if TYPE_CHECKING:
     import ee
@@ -107,7 +108,7 @@ def _worldpop_org_country_file(iso3: str, year: int) -> Path:
         url = _WORLDPOP_ORG_URL.format(year=year, iso3=iso3, iso3_lower=iso3.lower())
         tmp = dest.with_suffix(f".{uuid.uuid4().hex}.tif.part")
         try:
-            with requests.get(url, stream=True, timeout=600) as resp:
+            with get_with_retry(url, stream=True, timeout=600) as resp:
                 resp.raise_for_status()
                 with open(tmp, "wb") as fh:
                     for chunk in resp.iter_content(chunk_size=1024 * 1024):
@@ -390,7 +391,7 @@ def _download_band(url: str, timeout: int = 600) -> xr.DataArray:
     """GET a GEE download URL and return a rioxarray DataArray."""
     import rioxarray as rxr
 
-    resp = requests.get(url, timeout=timeout)
+    resp = get_with_retry(url, timeout=timeout)
     try:
         resp.raise_for_status()
     except HTTPError as exc:

@@ -21,12 +21,13 @@ _log = logging.getLogger(__name__)
 import matplotlib
 import numpy as np
 import pandas as pd
-import requests
 from matplotlib import dates as mdates
 from matplotlib.colors import ListedColormap
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from PIL import Image as PILImage
+
+from climate_change.core.http import get_with_retry
 
 # PDF report generation runs inside API worker threads, so force a
 # non-interactive renderer before pyplot can initialize a GUI backend.
@@ -909,7 +910,7 @@ class ReportBuilder:
             for x in range(min_x, max_x + 1):
                 for y in range(min_y, max_y + 1):
                     url = f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
-                    resp = requests.get(url, headers=headers, timeout=4)
+                    resp = get_with_retry(url, headers=headers, timeout=4)
                     resp.raise_for_status()
                     tile = PILImage.open(io.BytesIO(resp.content)).convert("RGB")
                     canvas.paste(tile, ((x - min_x) * 256, (y - min_y) * 256))
