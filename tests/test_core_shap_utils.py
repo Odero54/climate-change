@@ -9,6 +9,8 @@ silently produced 2-element, class-indexed "feature" lists for RF instead
 of real per-feature importances.
 """
 
+from unittest.mock import patch
+
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 
@@ -79,3 +81,37 @@ def test_xgboost_2d_shap_values_also_work():
     cols = [f"feat_{i}" for i in range(6)]
     result = compute_shap_importance(booster, X, cols)
     assert sorted(result["features"]) == sorted(cols)
+
+
+def test_xgboost_booster_falls_back_when_tree_explainer_cant_parse_the_model():
+    """On Python 3.10/3.11, the newest resolvable shap for that Python
+    version can't parse the newest resolvable XGBoost's base_score
+    serialization ('could not convert string to float' on a JSON-array-
+    as-string base_score) — confirmed live in CI. Booster has no
+    predict_proba (unlike RF/LightGBM/GBM), so the fallback must wrap
+    Booster.predict(DMatrix(...)) itself rather than relying on
+    predict_proba. Simulates the failure directly since reproducing the
+    exact broken shap+xgboost version pair isn't possible from a single
+    environment."""
+    from xgboost import DMatrix
+    from xgboost import train as xgb_train
+
+    rng = np.random.default_rng(2)
+    X = rng.standard_normal((60, 6))
+    y = np.array([0] * 20 + [1] * 20 + [2] * 20)
+    booster = xgb_train(
+        {"objective": "multi:softprob", "num_class": 3, "verbosity": 0},
+        DMatrix(X, label=y),
+        num_boost_round=20,
+    )
+    cols = [f"feat_{i}" for i in range(6)]
+
+    class _FakeTreeExplainer:
+        def __init__(self, model):
+            raise ValueError("could not convert string to float: '[0E0,0E0,0E0]'")
+
+    with patch("shap.TreeExplainer", _FakeTreeExplainer):
+        result = compute_shap_importance(booster, X[:15], cols)
+
+    assert sorted(result["features"]) == sorted(cols)
+    assert len(result["mean_abs_shap"]) == 6

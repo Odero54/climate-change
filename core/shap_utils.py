@@ -31,22 +31,35 @@ def compute_shap_importance(
     try:
         shap_vals = shap.TreeExplainer(model).shap_values(X_test)
     except Exception:
-        # TreeExplainer's tree-traversal implementation doesn't support every
-        # estimator/output-shape combination — confirmed live: sklearn's
-        # GradientBoostingClassifier for a 3+-class problem is internally one
-        # independent regressor per class, and shap.TreeExplainer explicitly
-        # rejects that ("GradientBoostingClassifier is only supported for
-        # binary classification right now!"). This only surfaced once SHAP
-        # started following the actually-selected model instead of always
-        # using XGBoost. Fall back to the general, model-agnostic Explainer
-        # (permutation-based, using predict_proba) — slower, but works for
-        # any classifier; only triggered for the shapes TreeExplainer can't
-        # handle. A small fixed background sample keeps it from scaling with
-        # the full test set size.
-        if not hasattr(model, "predict_proba"):
+        # TreeExplainer doesn't support every estimator/output-shape/version
+        # combination it's handed — two confirmed live failures:
+        #   - sklearn's GradientBoostingClassifier for a 3+-class problem is
+        #     internally one independent regressor per class, and
+        #     shap.TreeExplainer explicitly rejects that ("only supported
+        #     for binary classification right now!").
+        #   - On Python 3.10/3.11, the newest resolvable shap (0.49.1/0.51.0
+        #     — 0.52+ requires Python>=3.12) can't parse the newest
+        #     resolvable XGBoost's (3.2.0 — 3.3+ also requires Python>=3.12)
+        #     base_score serialization ('ValueError: could not convert
+        #     string to float' on a JSON-array-as-string base_score).
+        # Both only surfaced once SHAP started following the actually-
+        # selected model instead of always using XGBoost. Rather than chase
+        # a fragile shap/xgboost version pairing across the package's whole
+        # supported Python range, fall back to the general, model-agnostic
+        # Explainer (permutation-based) for anything TreeExplainer can't
+        # handle — works regardless of the shap/xgboost version pair
+        # actually resolved. A small fixed background sample keeps it from
+        # scaling with the full test set size.
+        if hasattr(model, "predict_proba"):
+            predict_fn = model.predict_proba
+        elif hasattr(model, "predict") and type(model).__module__.startswith("xgboost"):
+            from xgboost import DMatrix
+
+            predict_fn = lambda X: model.predict(DMatrix(X))  # noqa: E731
+        else:
             raise
         background = X_test[: min(50, len(X_test))]
-        shap_vals = shap.Explainer(model.predict_proba, background)(X_test).values
+        shap_vals = shap.Explainer(predict_fn, background)(X_test).values
 
     arr = np.array(shap_vals) if isinstance(shap_vals, list) else np.asarray(shap_vals)
 
