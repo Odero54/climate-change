@@ -7,13 +7,17 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from xgboost import Booster, DMatrix
 
+import pandas as pd
+
 from climate_change.flood.features import FEATURE_COLS
 from climate_change.flood.model import (
     VALID_MODEL_TYPES,
+    FloodModel,
     _safe_cv_folds,
     _safe_stratify,
     build_flood_charts,
     classify_flood_risk,
+    compute_shap_importance,
     compute_uncertainty,
     evaluate_models,
     find_best_threshold,
@@ -347,3 +351,136 @@ class TestBuildFloodCharts:
         assert "rf" in VALID_MODEL_TYPES
         assert "xgboost" in VALID_MODEL_TYPES
         assert "ensemble" in VALID_MODEL_TYPES
+
+    def test_single_model_selection_omits_uncertainty_and_comparison(self):
+        """Single-model selections don't compute the other model at all, so
+        eval_result only has the selected model's key — model_performance
+        should reflect just that, and uncertainty should be omitted rather
+        than crashing on a missing 'rf'/'xgb'/'ensemble' key."""
+        n = 20
+        probs = np.linspace(0, 1, n)
+        actuals = (np.arange(n) % 2).tolist()
+        pred = (probs > 0.5).astype(int).tolist()
+        xgb_entry = {
+            "label": "XGBoost",
+            "f1": 0.8,
+            "auc": 0.85,
+            "threshold": 0.5,
+            "predictions": pred,
+            "probabilities": probs.tolist(),
+        }
+        eval_result = {"xgb": xgb_entry, "actuals": actuals}  # no "rf", no "ensemble"
+        shap_payload = {"features": FEATURE_COLS, "mean_abs_shap": [0.1] * len(FEATURE_COLS)}
+
+        result = build_flood_charts(eval_result, shap_payload, None, model_type="xgboost")
+
+        assert "uncertainty" not in result
+        assert result["model_performance"] == {"xgb": {"f1": 0.8, "auc": 0.85}, "selected": "xgboost"}
+
+
+# ── evaluate_models: single-model selection ────────────────────────────────────
+
+
+class TestEvaluateModelsSingleModel:
+    def test_rf_none_omits_rf_and_ensemble_keys(self, trained_models):
+        _, xgb, X_te, y_te = trained_models
+        result = evaluate_models(None, xgb, X_te, y_te)
+        assert "rf" not in result
+        assert "ensemble" not in result
+        assert "xgb" in result
+
+    def test_xgb_none_omits_xgb_and_ensemble_keys(self, trained_models):
+        rf, _, X_te, y_te = trained_models
+        result = evaluate_models(rf, None, X_te, y_te)
+        assert "xgb" not in result
+        assert "ensemble" not in result
+        assert "rf" in result
+
+    def test_both_none_returns_only_actuals(self, trained_models):
+        _, _, X_te, y_te = trained_models
+        result = evaluate_models(None, None, X_te, y_te)
+        assert set(result.keys()) == {"actuals"}
+
+
+# ── compute_shap_importance: works for either model type ───────────────────────
+
+
+class TestComputeShapImportanceEitherModel:
+    def test_rf_shap_returns_all_feature_cols(self, trained_models):
+        rf, _, X_te, _ = trained_models
+        result = compute_shap_importance(rf, X_te)
+        assert sorted(result["features"]) == sorted(FEATURE_COLS)
+        assert len(result["mean_abs_shap"]) == len(FEATURE_COLS)
+
+    def test_xgb_shap_returns_all_feature_cols(self, trained_models):
+        _, xgb, X_te, _ = trained_models
+        result = compute_shap_importance(xgb, X_te)
+        assert sorted(result["features"]) == sorted(FEATURE_COLS)
+        assert len(result["mean_abs_shap"]) == len(FEATURE_COLS)
+
+
+# ── FloodModel.predict: single-model selection trains only that model ──────────
+
+
+@pytest.fixture()
+def flood_training_df():
+    rng = np.random.default_rng(3)
+    n = 60
+    df = pd.DataFrame(
+        {
+            "elevation": rng.standard_normal(n),
+            "twi": rng.standard_normal(n),
+            "dist_river": rng.standard_normal(n),
+            "vv_change": rng.standard_normal(n),
+            "rainfall_7d": rng.standard_normal(n),
+            "rainfall_30d": rng.standard_normal(n),
+            "mndwi": rng.standard_normal(n),
+            "landcover": rng.standard_normal(n),
+            "longitude": rng.uniform(30, 31, n),
+            "latitude": rng.uniform(-1, 0, n),
+        }
+    )
+    is_flooded = np.zeros(n, dtype=int)
+    is_flooded[:30] = 1
+    df["is_flooded"] = is_flooded
+    return df
+
+
+class TestFloodModelPredictSingleModel:
+    def test_rf_only_never_trains_xgb(self, flood_training_df):
+        model = FloodModel()
+        result = model.predict(flood_training_df, {"model_type": "rf"})
+        assert model.rf is not None
+        assert model.xgb is None
+        assert result["stats"]["xgb_f1"] is None
+        assert result["stats"]["xgb_auc"] is None
+        assert result["stats"]["ensemble_f1"] is None
+        assert "uncertainty" not in result["charts"]
+        assert "mean_spread" not in result["stats"]
+
+    def test_xgboost_only_never_trains_rf(self, flood_training_df):
+        model = FloodModel()
+        result = model.predict(flood_training_df, {"model_type": "xgboost"})
+        assert model.xgb is not None
+        assert model.rf is None
+        assert result["stats"]["rf_f1"] is None
+        assert result["stats"]["rf_auc"] is None
+        assert result["stats"]["ensemble_f1"] is None
+        assert "uncertainty" not in result["charts"]
+
+    def test_ensemble_trains_both(self, flood_training_df):
+        model = FloodModel()
+        result = model.predict(flood_training_df, {"model_type": "ensemble"})
+        assert model.rf is not None
+        assert model.xgb is not None
+        assert result["stats"]["rf_f1"] is not None
+        assert result["stats"]["xgb_f1"] is not None
+        assert result["stats"]["ensemble_f1"] is not None
+        assert "uncertainty" in result["charts"]
+
+    def test_default_model_type_is_ensemble(self, flood_training_df):
+        model = FloodModel()
+        result = model.predict(flood_training_df, config=None)
+        assert model.rf is not None
+        assert model.xgb is not None
+        assert result["stats"]["model_type"] == "ensemble"

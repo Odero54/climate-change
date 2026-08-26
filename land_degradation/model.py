@@ -139,15 +139,16 @@ def train_lgbm(
 
 
 def evaluate_models(
-    rf: RandomForestClassifier,
-    lgbm: lgb.LGBMClassifier,
+    rf: RandomForestClassifier | None,
+    lgbm: lgb.LGBMClassifier | None,
     X_test: np.ndarray,
     y_test: np.ndarray,
 ) -> dict:
-    """Evaluate RF, LightGBM, and majority-vote ensemble on the held-out test set."""
-    rf_pred = np.asarray(rf.predict(X_test)).astype(int)
-    lgbm_pred = np.asarray(lgbm.predict(X_test)).astype(int)
-    ens_pred = ((rf_pred + lgbm_pred) >= 1).astype(int)
+    """
+    Evaluate whichever of RF/LightGBM were actually trained (both, for an
+    "ensemble" selection; exactly one otherwise) on the held-out test set,
+    plus their majority-vote ensemble when both are present.
+    """
 
     def _metrics(pred: np.ndarray, label: str) -> dict:
         return {
@@ -157,37 +158,29 @@ def evaluate_models(
             "predictions": pred.tolist(),
         }
 
-    return {
-        "rf": _metrics(rf_pred, "Random Forest"),
-        "lgbm": _metrics(lgbm_pred, "LightGBM"),
-        "ensemble": _metrics(ens_pred, "Ensemble (majority vote)"),
-        "actuals": y_test.tolist(),
-    }
+    rf_pred = np.asarray(rf.predict(X_test)).astype(int) if rf is not None else None
+    lgbm_pred = np.asarray(lgbm.predict(X_test)).astype(int) if lgbm is not None else None
+
+    result: dict = {"actuals": y_test.tolist()}
+    if rf_pred is not None:
+        result["rf"] = _metrics(rf_pred, "Random Forest")
+    if lgbm_pred is not None:
+        result["lgbm"] = _metrics(lgbm_pred, "LightGBM")
+    if rf_pred is not None and lgbm_pred is not None:
+        ens_pred = ((rf_pred + lgbm_pred) >= 1).astype(int)
+        result["ensemble"] = _metrics(ens_pred, "Ensemble (majority vote)")
+    return result
 
 
 def compute_shap_importance(
     model: RandomForestClassifier | lgb.LGBMClassifier,
     X_test: np.ndarray,
 ) -> dict:
-    """
-    TreeExplainer SHAP values sorted by descending mean |SHAP|.
-    For multi-output (RF), averages across classes.
-    """
-    import shap
+    """TreeExplainer SHAP values for whichever model was actually selected/trained — see core.shap_utils for the axis-handling details."""
+    from climate_change.core.shap_utils import compute_shap_importance as _compute_shap_importance
 
     X_df = pd.DataFrame(X_test, columns=FEATURE_COLS)
-    explainer = shap.TreeExplainer(model)
-    shap_vals = explainer.shap_values(X_df)
-
-    arr = np.array(shap_vals) if isinstance(shap_vals, list) else shap_vals
-    # arr may be (n_classes, n_samples, n_features) or (n_samples, n_features)
-    mean_abs = np.abs(arr).mean(axis=tuple(range(arr.ndim - 1)))
-
-    rank_idx = np.argsort(mean_abs)[::-1]
-    return {
-        "features": [FEATURE_COLS[i] for i in rank_idx],
-        "mean_abs_shap": mean_abs[rank_idx].round(4).tolist(),
-    }
+    return _compute_shap_importance(model, X_df, FEATURE_COLS)
 
 
 def compute_ndvi_trend(ndvi_annual: pd.Series) -> dict:
@@ -307,17 +300,10 @@ def build_degradation_charts(
         "shap": shap_payload,
         "trend": trend_stats,
         "model_performance": {
-            "rf": {
-                "f1": eval_result["rf"]["f1"],
-                "accuracy": eval_result["rf"]["accuracy"],
-            },
-            "lgbm": {
-                "f1": eval_result["lgbm"]["f1"],
-                "accuracy": eval_result["lgbm"]["accuracy"],
-            },
-            "ensemble": {
-                "f1": eval_result["ensemble"]["f1"],
-                "accuracy": eval_result["ensemble"]["accuracy"],
+            **{
+                key: {"f1": eval_result[key]["f1"], "accuracy": eval_result[key]["accuracy"]}
+                for key in ("rf", "lgbm", "ensemble")
+                if key in eval_result
             },
             "selected": model_type,
         },
@@ -327,12 +313,14 @@ def build_degradation_charts(
 class LandDegradationModel:
     """
     Orchestrates the full ML pipeline for a single land degradation analysis.
-    Always trains RF + LightGBM. config['model_type'] selects which predictions
-    drive the primary risk distribution:
-      "rf"       — Random Forest
-      "lgbm"     — LightGBM (default)
-      "ensemble" — majority vote of RF + LightGBM
-    Trained models and scaler are stored on self for use by cog_export.
+    config['model_type'] selects which model(s) are trained and which
+    predictions drive the primary risk distribution:
+      "rf"       — Random Forest only
+      "lgbm"     — LightGBM only (default)
+      "ensemble" — both, combined as majority vote of RF + LightGBM
+    Only the selected model type is trained. Trained models and scaler are
+    stored on self for use by cog_export (whichever model wasn't needed
+    stays None).
     """
 
     def __init__(self) -> None:
@@ -374,25 +362,35 @@ class LandDegradationModel:
         X_train_s = self.scaler.fit_transform(X_train)
         X_test_s = self.scaler.transform(X_test)
 
-        # Train RF and LightGBM concurrently when the Dask cluster is running,
-        # otherwise fall back to sequential execution (e.g. during unit tests).
+        # Only train what this selection needs — "ensemble" needs both, "rf"
+        # and "lgbm" need only the one selected. When both are needed, train
+        # them concurrently on the Dask cluster if it's running, otherwise
+        # fall back to sequential execution (e.g. during unit tests).
         from climate_change.core.dask_engine import DaskEngine
 
-        client = DaskEngine.get_client_if_running()
+        need_rf = model_type in ("rf", "ensemble")
+        need_lgbm = model_type in ("lgbm", "ensemble")
+        rf_meta: dict = {"cv_f1_mean": None, "cv_f1_std": None}
+        lgbm_meta: dict = {"cv_f1_mean": None, "cv_f1_std": None}
+
+        client = DaskEngine.get_client_if_running() if (need_rf and need_lgbm) else None
         if client is not None:
             f_rf = client.submit(train_rf, X_train_s, y_train, pure=False)
             f_lgbm = client.submit(train_lgbm, X_train_s, y_train, pure=False)
             (self.rf, rf_meta), (self.lgbm, lgbm_meta) = cast(list, client.gather([f_rf, f_lgbm]))
         else:
-            self.rf, rf_meta = train_rf(X_train_s, y_train)
-            self.lgbm, lgbm_meta = train_lgbm(X_train_s, y_train)
-
-        assert self.rf is not None
-        assert self.lgbm is not None
+            if need_rf:
+                self.rf, rf_meta = train_rf(X_train_s, y_train)
+            if need_lgbm:
+                self.lgbm, lgbm_meta = train_lgbm(X_train_s, y_train)
 
         eval_result = evaluate_models(self.rf, self.lgbm, X_test_s, y_test)
-        shap_model = self.rf if model_type == "rf" else self.lgbm
-        shap_payload = compute_shap_importance(shap_model, X_test_s)
+        if model_type == "rf":
+            assert self.rf is not None
+            shap_payload = compute_shap_importance(self.rf, X_test_s)
+        else:
+            assert self.lgbm is not None
+            shap_payload = compute_shap_importance(self.lgbm, X_test_s)
         trend_stats = compute_ndvi_trend(ndvi_annual)
 
         charts = build_degradation_charts(
@@ -409,14 +407,14 @@ class LandDegradationModel:
             "rf_cv_f1": round(rf_meta["cv_f1_mean"], 4)
             if rf_meta["cv_f1_mean"] is not None
             else None,
-            "rf_f1": eval_result["rf"]["f1"],
-            "rf_accuracy": eval_result["rf"]["accuracy"],
+            "rf_f1": eval_result["rf"]["f1"] if "rf" in eval_result else None,
+            "rf_accuracy": eval_result["rf"]["accuracy"] if "rf" in eval_result else None,
             "lgbm_cv_f1": round(lgbm_meta["cv_f1_mean"], 4)
             if lgbm_meta["cv_f1_mean"] is not None
             else None,
-            "lgbm_f1": eval_result["lgbm"]["f1"],
-            "lgbm_accuracy": eval_result["lgbm"]["accuracy"],
-            "ensemble_f1": eval_result["ensemble"]["f1"],
+            "lgbm_f1": eval_result["lgbm"]["f1"] if "lgbm" in eval_result else None,
+            "lgbm_accuracy": eval_result["lgbm"]["accuracy"] if "lgbm" in eval_result else None,
+            "ensemble_f1": eval_result["ensemble"]["f1"] if "ensemble" in eval_result else None,
             "selected_f1": eval_result[result_key]["f1"],
             "top_degradation_driver": shap_payload["features"][0],
             **trend_stats,
@@ -426,10 +424,14 @@ class LandDegradationModel:
             df[FEATURE_COLS].fillna(df[FEATURE_COLS].median()).to_numpy(dtype=np.float64)
         )
         if model_type == "rf":
+            assert self.rf is not None
             all_preds = np.asarray(self.rf.predict(X_all_s)).astype(int)
         elif model_type == "lgbm":
+            assert self.lgbm is not None
             all_preds = np.asarray(self.lgbm.predict(X_all_s)).astype(int)
         else:
+            assert self.rf is not None
+            assert self.lgbm is not None
             rf_preds = np.asarray(self.rf.predict(X_all_s)).astype(int)
             lgbm_preds = np.asarray(self.lgbm.predict(X_all_s)).astype(int)
             all_preds = ((rf_preds + lgbm_preds) >= 1).astype(int)

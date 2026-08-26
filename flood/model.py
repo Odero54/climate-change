@@ -187,18 +187,17 @@ def find_best_threshold(probs: np.ndarray, y_true: np.ndarray) -> tuple[float, f
 
 # Evaluation
 def evaluate_models(
-    rf: RandomForestClassifier,
-    xgb: Booster,
+    rf: RandomForestClassifier | None,
+    xgb: Booster | None,
     X_test: np.ndarray,
     y_test: np.ndarray,
 ) -> dict:
     """
-    Evaluate RF, XGBoost, and their ensemble on the held-out test set.
-    Thresholds are maximised per-model via the precision-recall curve.
+    Evaluate whichever of RF/XGBoost were actually trained (both, for an
+    "ensemble" selection; exactly one otherwise) on the held-out test set,
+    plus their ensemble when both are present. Thresholds are maximised
+    per-model via the precision-recall curve.
     """
-    rf_prob = positive_class_proba(rf, rf.predict_proba(X_test))
-    xgb_prob = xgb.predict(DMatrix(X_test))
-    ens_prob = (rf_prob + xgb_prob) / 2.0
 
     def _metrics(prob: np.ndarray, label: str) -> dict:
         thresh, _ = find_best_threshold(prob, y_test)
@@ -217,31 +216,25 @@ def evaluate_models(
             "probabilities": prob.round(4).tolist(),
         }
 
-    return {
-        "rf": _metrics(rf_prob, "Random Forest"),
-        "xgb": _metrics(xgb_prob, "XGBoost"),
-        "ensemble": _metrics(ens_prob, "Ensemble (mean prob)"),
-        "actuals": y_test.tolist(),
-    }
+    rf_prob = positive_class_proba(rf, rf.predict_proba(X_test)) if rf is not None else None
+    xgb_prob = xgb.predict(DMatrix(X_test)) if xgb is not None else None
+
+    result: dict = {"actuals": y_test.tolist()}
+    if rf_prob is not None:
+        result["rf"] = _metrics(rf_prob, "Random Forest")
+    if xgb_prob is not None:
+        result["xgb"] = _metrics(xgb_prob, "XGBoost")
+    if rf_prob is not None and xgb_prob is not None:
+        result["ensemble"] = _metrics((rf_prob + xgb_prob) / 2.0, "Ensemble (mean prob)")
+    return result
 
 
 # SHAP
-def compute_shap_importance(xgb: Booster, X_test: np.ndarray) -> dict:
-    """
-    TreeExplainer SHAP values for XGBoost, sorted by descending mean |SHAP|.
-    XGBoost is always used for SHAP regardless of model_type — it provides
-    the most interpretable tree-based explanations.
-    """
-    import shap
+def compute_shap_importance(model: RandomForestClassifier | Booster, X_test: np.ndarray) -> dict:
+    """TreeExplainer SHAP values for whichever model was actually selected/trained — see core.shap_utils for the axis-handling details."""
+    from climate_change.core.shap_utils import compute_shap_importance as _compute_shap_importance
 
-    explainer = shap.TreeExplainer(xgb)
-    shap_vals = explainer.shap_values(X_test)
-    mean_abs = np.abs(shap_vals).mean(axis=0)
-    rank_idx = np.argsort(mean_abs)[::-1]
-    return {
-        "features": [FEATURE_COLS[i] for i in rank_idx],
-        "mean_abs_shap": mean_abs[rank_idx].round(4).tolist(),
-    }
+    return _compute_shap_importance(model, X_test, FEATURE_COLS)
 
 
 # Uncertainty
@@ -249,7 +242,9 @@ def compute_uncertainty(rf_prob: np.ndarray, xgb_prob: np.ndarray) -> dict:
     """
     Epistemic uncertainty from RF–XGBoost probability spread.
     Pixels with spread > 0.20 are flagged for field validation.
-    Always computed regardless of model_type so the UI can display it.
+    Only meaningful — and only computed — when both models were trained,
+    i.e. an "ensemble" selection; single-model selections skip this
+    entirely since there's no second model to compare against.
     """
     spread = np.abs(rf_prob - xgb_prob)
     return {
@@ -277,14 +272,18 @@ _MODEL_TYPE_KEY: dict[str, str] = {
 def build_flood_charts(
     eval_result: dict,
     shap_payload: dict,
-    uncertainty_payload: dict,
+    uncertainty_payload: dict | None,
     model_type: str = "ensemble",
 ) -> dict:
     """
     Assemble frontend-ready chart payloads.
 
     Risk distribution is derived from the selected model_type's probabilities.
-    model_performance always includes all three models for comparison.
+    model_performance includes metrics only for models actually present in
+    eval_result — the full RF/XGBoost/Ensemble three-way comparison only
+    when model_type == "ensemble" (both trained); otherwise just the
+    selected model's own metrics. uncertainty is included only when
+    uncertainty_payload is provided (ensemble selections only).
     """
     result_key = _MODEL_TYPE_KEY.get(model_type, "ensemble")
     selected_probs = np.array(eval_result[result_key]["probabilities"])
@@ -307,36 +306,36 @@ def build_flood_charts(
         "colors": [RISK_COLORS[c] for c in _RISK_ORDER],
     }
 
-    # All three models always shown for comparison
-    model_performance = {
-        "rf": {"f1": eval_result["rf"]["f1"], "auc": eval_result["rf"]["auc"]},
-        "xgb": {"f1": eval_result["xgb"]["f1"], "auc": eval_result["xgb"]["auc"]},
-        "ensemble": {
-            "f1": eval_result["ensemble"]["f1"],
-            "auc": eval_result["ensemble"]["auc"],
-        },
-        "selected": model_type,
+    model_performance: dict = {
+        key: {"f1": eval_result[key]["f1"], "auc": eval_result[key]["auc"]}
+        for key in ("rf", "xgb", "ensemble")
+        if key in eval_result
     }
+    model_performance["selected"] = model_type
 
-    return {
+    charts = {
         "risk_distribution": risk_chart,
         "shap": shap_payload,
-        "uncertainty": uncertainty_payload,
         "model_performance": model_performance,
     }
+    if uncertainty_payload is not None:
+        charts["uncertainty"] = uncertainty_payload
+    return charts
 
 
 # FloodModel orchestrator
 class FloodModel:
     """
     Orchestrates the full ML pipeline for a single flood event.
-    Always trains both RF and XGBoost. config['model_type'] selects which
+    config['model_type'] selects which model(s) are trained and which
     probabilities drive the primary stats, risk map, and COG export:
-      "rf"       — Random Forest
-      "xgboost"  — XGBoost
-      "ensemble" — mean of RF + XGBoost (default)
-    Trained models are stored on self.rf / self.xgb so the use case can
-    pass them directly to cog_export.export_flood_cog.
+      "rf"       — Random Forest only
+      "xgboost"  — XGBoost only
+      "ensemble" — both, combined as the mean of RF + XGBoost (default)
+    Only the selected model type is trained — an "rf"/"xgboost" selection
+    never pays XGBoost's/RF's training cost. Trained models are stored on
+    self.rf / self.xgb (whichever weren't needed stay None) so the use case
+    can pass them to cog_export.export_flood_cog.
     """
 
     def __init__(self) -> None:
@@ -365,28 +364,43 @@ class FloodModel:
             X, y, test_size=0.2, random_state=42, stratify=_safe_stratify(y)
         )
 
-        # Train RF and XGBoost concurrently when the Dask cluster is running,
+        # Only train what this selection needs — "ensemble" needs both, "rf"
+        # and "xgboost" need only the one selected. When both are needed,
+        # train them concurrently on the Dask cluster if it's running,
         # otherwise fall back to sequential execution (e.g. during unit tests).
         from climate_change.core.dask_engine import DaskEngine
 
-        client = DaskEngine.get_client_if_running()
+        need_rf = model_type in ("rf", "ensemble")
+        need_xgb = model_type in ("xgboost", "ensemble")
+        rf_meta: dict = {"cv_f1_mean": None, "cv_f1_std": None}
+        xgb_meta: dict = {"cv_f1_mean": None, "cv_f1_std": None}
+
+        client = DaskEngine.get_client_if_running() if (need_rf and need_xgb) else None
         if client is not None:
             f_rf = client.submit(train_rf, X_train, y_train, pure=False)
             f_xgb = client.submit(train_xgb, X_train, y_train, X_test, y_test, pure=False)
             (self.rf, rf_meta), (self.xgb, xgb_meta) = cast(list, client.gather([f_rf, f_xgb]))
         else:
-            self.rf, rf_meta = train_rf(X_train, y_train)
-            self.xgb, xgb_meta = train_xgb(X_train, y_train, X_test, y_test)
-
-        assert self.rf is not None
-        assert self.xgb is not None
+            if need_rf:
+                self.rf, rf_meta = train_rf(X_train, y_train)
+            if need_xgb:
+                self.xgb, xgb_meta = train_xgb(X_train, y_train, X_test, y_test)
 
         eval_result = evaluate_models(self.rf, self.xgb, X_test, y_test)
-        shap_payload = compute_shap_importance(self.xgb, X_test)
-        uncertainty = compute_uncertainty(
-            np.array(eval_result["rf"]["probabilities"]),
-            np.array(eval_result["xgb"]["probabilities"]),
-        )
+
+        if model_type == "rf":
+            assert self.rf is not None
+            shap_payload = compute_shap_importance(self.rf, X_test)
+        else:
+            assert self.xgb is not None
+            shap_payload = compute_shap_importance(self.xgb, X_test)
+
+        uncertainty = None
+        if model_type == "ensemble":
+            uncertainty = compute_uncertainty(
+                np.array(eval_result["rf"]["probabilities"]),
+                np.array(eval_result["xgb"]["probabilities"]),
+            )
         charts = build_flood_charts(eval_result, shap_payload, uncertainty, model_type)
         # Risk percentages from the selected model
         result_key = _MODEL_TYPE_KEY.get(model_type, "ensemble")
@@ -412,15 +426,15 @@ class FloodModel:
             "rf_cv_f1": round(rf_meta["cv_f1_mean"], 4)
             if rf_meta["cv_f1_mean"] is not None
             else None,
-            "rf_f1": eval_result["rf"]["f1"],
-            "rf_auc": eval_result["rf"]["auc"],
+            "rf_f1": eval_result["rf"]["f1"] if "rf" in eval_result else None,
+            "rf_auc": eval_result["rf"]["auc"] if "rf" in eval_result else None,
             "xgb_cv_f1": round(xgb_meta["cv_f1_mean"], 4)
             if xgb_meta["cv_f1_mean"] is not None
             else None,
-            "xgb_f1": eval_result["xgb"]["f1"],
-            "xgb_auc": eval_result["xgb"]["auc"],
-            "ensemble_f1": eval_result["ensemble"]["f1"],
-            "ensemble_auc": eval_result["ensemble"]["auc"],
+            "xgb_f1": eval_result["xgb"]["f1"] if "xgb" in eval_result else None,
+            "xgb_auc": eval_result["xgb"]["auc"] if "xgb" in eval_result else None,
+            "ensemble_f1": eval_result["ensemble"]["f1"] if "ensemble" in eval_result else None,
+            "ensemble_auc": eval_result["ensemble"]["auc"] if "ensemble" in eval_result else None,
             "selected_f1": eval_result[result_key]["f1"],
             "selected_auc": eval_result[result_key]["auc"],
             "selected_threshold": eval_result[result_key]["threshold"],
@@ -429,8 +443,9 @@ class FloodModel:
             "high_risk_pct": high_pct,
             "medium_risk_pct": medium_pct,
             "low_risk_pct": low_pct,
-            **uncertainty,
         }
+        if uncertainty is not None:
+            stats.update(uncertainty)
 
         lon_idx = FEATURE_COLS.index("longitude")
         lat_idx = FEATURE_COLS.index("latitude")
