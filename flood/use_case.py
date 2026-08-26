@@ -255,7 +255,7 @@ class FloodRiskUseCase(BaseUseCase):
         }
 
     def _run_model_dict(self, features: dict, config: dict | None = None) -> dict:
-        """Train RF + XGBoost, evaluate, compute SHAP and uncertainty."""
+        """Train the selected model(s) (only both for an ensemble selection), evaluate, compute SHAP and (ensemble-only) uncertainty."""
         model = FloodModel()
         result = model.predict(features["training_df"], config)
         features["_rf"] = model.rf

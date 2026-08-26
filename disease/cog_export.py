@@ -36,8 +36,8 @@ RISK_INT: dict[int, str] = {1: "Low Risk", 2: "Medium Risk", 3: "High Risk"}
 
 
 def export_disease_cog(
-    gbm_model: GradientBoostingClassifier,
-    xgb_model: Booster,
+    gbm_model: GradientBoostingClassifier | None,
+    xgb_model: Booster | None,
     scaler: StandardScaler,
     datasets: dict[str, xr.Dataset],
     output_dir: str,
@@ -101,10 +101,14 @@ def export_disease_cog(
 
     # Inference
     if model_type == "gbm":
+        assert gbm_model is not None
         proba = gbm_model.predict_proba(X_valid)
     elif model_type == "xgboost":
+        assert xgb_model is not None
         proba = xgb_model.predict(DMatrix(X_valid))
     else:  # ensemble
+        assert gbm_model is not None
+        assert xgb_model is not None
         proba_gbm = pad_gbm_proba(gbm_model, gbm_model.predict_proba(X_valid))
         proba = (proba_gbm + xgb_model.predict(DMatrix(X_valid))) / 2.0
 

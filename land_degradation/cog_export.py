@@ -26,8 +26,8 @@ class DegradationCogResult(TypedDict):
 
 
 def export_degradation_cog(
-    rf_model: RandomForestClassifier,
-    lgbm_model: lgb.LGBMClassifier,
+    rf_model: RandomForestClassifier | None,
+    lgbm_model: lgb.LGBMClassifier | None,
     scaler: StandardScaler,
     datasets: dict[str, xr.Dataset],
     output_dir: str = "outputs",
@@ -81,10 +81,14 @@ def export_degradation_cog(
     X_valid = scaler.transform(X[valid_mask])
 
     if model_type == "rf":
+        assert rf_model is not None
         pred_valid = np.asarray(rf_model.predict(X_valid)).astype(np.int8)
     elif model_type == "lgbm":
+        assert lgbm_model is not None
         pred_valid = np.asarray(lgbm_model.predict(X_valid)).astype(np.int8)
     else:
+        assert rf_model is not None
+        assert lgbm_model is not None
         rf_pred = np.asarray(rf_model.predict(X_valid)).astype(int)
         lgbm_pred = np.asarray(lgbm_model.predict(X_valid)).astype(int)
         pred_valid = ((rf_pred + lgbm_pred) >= 1).astype(np.int8)

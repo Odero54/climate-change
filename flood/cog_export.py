@@ -59,8 +59,8 @@ def flood_raster_distribution(path: str | Path) -> dict:
 
 
 def export_flood_cog(
-    rf_model: RandomForestClassifier,
-    xgb_model: Booster,
+    rf_model: RandomForestClassifier | None,
+    xgb_model: Booster | None,
     datasets: dict[str, xr.Dataset],
     output_dir: str,
     prefix: str,
@@ -139,13 +139,20 @@ def export_flood_cog(
     # Inference — route by model_type
     risk_grid: np.ndarray = np.zeros(n_lat * n_lon, dtype=np.uint8)
     if X_valid.size:
-        prob_rf = positive_class_proba(rf_model, rf_model.predict_proba(X_valid))
-        prob_xgb = xgb_model.predict(DMatrix(X_valid))
+        # Only invoke the model(s) this selection actually has — rf_model/
+        # xgb_model are None for whichever wasn't trained (single-model
+        # selections skip training the other one entirely).
         if model_type == "rf":
-            selected_prob = prob_rf
+            assert rf_model is not None
+            selected_prob = positive_class_proba(rf_model, rf_model.predict_proba(X_valid))
         elif model_type == "xgboost":
-            selected_prob = prob_xgb
+            assert xgb_model is not None
+            selected_prob = xgb_model.predict(DMatrix(X_valid))
         else:  # ensemble
+            assert rf_model is not None
+            assert xgb_model is not None
+            prob_rf = positive_class_proba(rf_model, rf_model.predict_proba(X_valid))
+            prob_xgb = xgb_model.predict(DMatrix(X_valid))
             selected_prob = (prob_rf + prob_xgb) / 2.0
 
         # Classify and reconstruct spatial grid
