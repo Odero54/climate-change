@@ -1016,23 +1016,44 @@ class ReportBuilder:
         if not color_map:
             return None
 
-        fig, ax = plt.subplots(figsize=(10, 7))
+        # Reproject to EPSG:3857 (Web Mercator) so points/boundary line up
+        # with the OSM basemap tiles, which are natively Mercator-projected
+        # — the same CRS _render_raster_bytes already renders its basemap in.
+        gdf_m = gdf.to_crs(epsg=3857)
+        boundary_m = None
+        if boundary_geom is not None:
+            with contextlib.suppress(Exception):
+                boundary_m = (
+                    gpd.GeoSeries([boundary_geom], crs="EPSG:4326").to_crs(epsg=3857).iloc[0]
+                )
 
-        if "risk_class" in gdf.columns:
+        minx, miny, maxx, maxy = gdf_m.total_bounds
+        if boundary_m is not None:
+            b_minx, b_miny, b_maxx, b_maxy = boundary_m.bounds
+            minx, miny = min(minx, b_minx), min(miny, b_miny)
+            maxx, maxy = max(maxx, b_maxx), max(maxy, b_maxy)
+
+        fig, ax = plt.subplots(figsize=(10, 7))
+        basemap = self._osm_basemap((minx, miny, maxx, maxy))
+        if basemap:
+            base_img, base_extent = basemap
+            ax.imshow(base_img, extent=base_extent, origin="upper", zorder=0)
+
+        if "risk_class" in gdf_m.columns:
             for risk_class, hex_color in color_map.items():
-                subset = gdf[gdf["risk_class"] == risk_class]
+                subset = gdf_m[gdf_m["risk_class"] == risk_class]
                 if not subset.empty:
                     subset.plot(
                         ax=ax,
                         color=hex_color,
                         markersize=4,
                         label=risk_class,
-                        alpha=0.75,
+                        alpha=0.85 if basemap else 0.75,
                         zorder=2,
                     )
 
-        if boundary_geom is not None:
-            gpd.GeoSeries([boundary_geom], crs="EPSG:4326").plot(
+        if boundary_m is not None:
+            gpd.GeoSeries([boundary_m]).plot(
                 ax=ax,
                 facecolor="none",
                 edgecolor="#1B2A4A",
@@ -1047,9 +1068,12 @@ class ReportBuilder:
             title_fontsize=10,
             framealpha=0.85,
         )
-        ax.set_xlabel("Longitude", fontsize=9)
-        ax.set_ylabel("Latitude", fontsize=9)
-        ax.tick_params(labelsize=8)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlim(minx, maxx)
+        ax.set_ylim(miny, maxy)
+        self._add_scale_bar(ax, (minx, miny, maxx, maxy))
         info = USE_CASE_REGISTRY.get(output.module)
         map_title = (
             f"{info.name} Risk Map"
