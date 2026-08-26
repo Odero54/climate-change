@@ -116,3 +116,70 @@ async def run_analysis(
         output.metadata["report_path"] = str(report_path)
 
     return output
+
+
+async def run_multi_hazard_analysis(
+    modules: list[str],
+    aoi_geojson: dict,
+    start_date: str,
+    end_date: str,
+    country: str,
+    gee_project: str = "",
+    extra_params: dict[str, dict] | None = None,
+) -> dict[str, AnalysisOutput]:
+    """
+    Run two different risk modules against the same area of interest and
+    date range, for side-by-side comparison of different hazards (as
+    opposed to ``run_analysis`` run twice for the same hazard across two
+    different regions).
+
+    The two modules run sequentially, sharing one ``DaskEngine`` — running
+    them concurrently would double peak memory for no benefit under this
+    package's typical single-worker deployment.
+
+    Parameters
+    ----------
+    modules:
+        Exactly two distinct module names, e.g. ``["food_security", "land_degradation"]``.
+    extra_params:
+        Per-module extra parameters, e.g. ``{"food_security": {"model_type": "rf"}, ...}``.
+    """
+    if len(modules) != 2:
+        raise ValueError(
+            f"run_multi_hazard_analysis requires exactly 2 modules, got {len(modules)}"
+        )
+    if modules[0] == modules[1]:
+        raise ValueError(
+            f"run_multi_hazard_analysis requires 2 distinct modules, got '{modules[0]}' twice"
+        )
+
+    for module in modules:
+        _ensure_module_registered(module)
+        if module not in MODULE_MAP:
+            raise ValueError(f"Unknown module: '{module}'. Available: {sorted(MODULE_MAP)}")
+
+    project = gee_project or os.environ.get("GEE_PROJECT", "")
+    ensure_gee(project)
+
+    from climate_change.core.dask_engine import DaskEngine
+
+    dask_engine = DaskEngine()
+    dask_engine.get_client()  # start cluster (idempotent)
+
+    all_params = extra_params or {}
+    results: dict[str, AnalysisOutput] = {}
+    for module in modules:
+        params = dict(all_params.get(module, {}))
+        params.setdefault("gee_project", project)
+        config = AnalysisConfig(
+            module=module,
+            aoi_geojson=aoi_geojson,
+            start_date=start_date,
+            end_date=end_date,
+            country=country,
+            extra_params=params,
+        )
+        use_case: BaseUseCase = MODULE_MAP[module](dask_engine)
+        results[module] = await use_case.execute(config)
+
+    return results

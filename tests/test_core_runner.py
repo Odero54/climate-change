@@ -98,3 +98,110 @@ class TestRunAnalysis:
                     )
                 )
         assert result is output
+
+
+class TestRunMultiHazardAnalysis:
+    """run_multi_hazard_analysis: two distinct modules, one shared AOI/date range."""
+
+    def _make_output(self, module):
+        return AnalysisOutput(
+            module=module,
+            geojson={},
+            raster_path=None,
+            stats={},
+            shap=None,
+            charts={},
+            metadata={},
+        )
+
+    def test_requires_exactly_two_modules(self):
+        from climate_change.core.runner import run_multi_hazard_analysis
+
+        with pytest.raises(ValueError, match="exactly 2 modules"):
+            asyncio.run(
+                run_multi_hazard_analysis(
+                    modules=["drought"],
+                    aoi_geojson={},
+                    start_date="2020-01-01",
+                    end_date="2021-01-01",
+                    country="Kenya",
+                )
+            )
+
+    def test_rejects_duplicate_modules(self):
+        from climate_change.core.runner import run_multi_hazard_analysis
+
+        with pytest.raises(ValueError, match="2 distinct modules"):
+            asyncio.run(
+                run_multi_hazard_analysis(
+                    modules=["drought", "drought"],
+                    aoi_geojson={},
+                    start_date="2020-01-01",
+                    end_date="2021-01-01",
+                    country="Kenya",
+                )
+            )
+
+    def test_unknown_module_raises_value_error(self):
+        from climate_change.core.runner import run_multi_hazard_analysis
+
+        with (
+            patch("climate_change.core.runner.ensure_gee"),
+            patch("climate_change.core.runner._ensure_module_registered"),
+            pytest.raises(ValueError, match="Unknown module"),
+        ):
+            asyncio.run(
+                run_multi_hazard_analysis(
+                    modules=["drought", "__nonexistent__"],
+                    aoi_geojson={},
+                    start_date="2020-01-01",
+                    end_date="2021-01-01",
+                    country="Kenya",
+                )
+            )
+
+    def test_calls_execute_once_per_module_with_own_params(self):
+        drought_output = self._make_output("drought")
+        food_output = self._make_output("food_security")
+
+        drought_uc = MagicMock()
+        drought_uc.execute = AsyncMock(return_value=drought_output)
+        food_uc = MagicMock()
+        food_uc.execute = AsyncMock(return_value=food_output)
+
+        drought_cls = MagicMock(return_value=drought_uc)
+        food_cls = MagicMock(return_value=food_uc)
+
+        with (
+            patch("climate_change.core.runner.ensure_gee"),
+            patch("climate_change.core.runner._ensure_module_registered"),
+            patch.dict(
+                "climate_change.core.runner.MODULE_MAP",
+                {"drought": drought_cls, "food_security": food_cls},
+            ),
+        ):
+            from climate_change.core.dask_engine import DaskEngine
+            from climate_change.core.runner import run_multi_hazard_analysis
+
+            with patch.object(DaskEngine, "get_client", return_value=MagicMock()):
+                result = asyncio.run(
+                    run_multi_hazard_analysis(
+                        modules=["drought", "food_security"],
+                        aoi_geojson={"type": "Polygon", "coordinates": [[]]},
+                        start_date="2020-01-01",
+                        end_date="2021-01-01",
+                        country="Kenya",
+                        extra_params={
+                            "drought": {"model_type": "lstm"},
+                            "food_security": {"model_type": "rf"},
+                        },
+                    )
+                )
+
+        assert result == {"drought": drought_output, "food_security": food_output}
+        drought_uc.execute.assert_awaited_once()
+        food_uc.execute.assert_awaited_once()
+        drought_config = drought_uc.execute.await_args.args[0]
+        food_config = food_uc.execute.await_args.args[0]
+        assert drought_config.extra_params["model_type"] == "lstm"
+        assert food_config.extra_params["model_type"] == "rf"
