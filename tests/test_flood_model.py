@@ -2,12 +2,11 @@
 find_best_threshold, compute_uncertainty, build_flood_charts."""
 
 import numpy as np
+import pandas as pd
 import pytest
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from xgboost import Booster, DMatrix
-
-import pandas as pd
 
 from climate_change.flood.features import FEATURE_COLS
 from climate_change.flood.model import (
@@ -375,7 +374,10 @@ class TestBuildFloodCharts:
         result = build_flood_charts(eval_result, shap_payload, None, model_type="xgboost")
 
         assert "uncertainty" not in result
-        assert result["model_performance"] == {"xgb": {"f1": 0.8, "auc": 0.85}, "selected": "xgboost"}
+        assert result["model_performance"] == {
+            "xgb": {"f1": 0.8, "auc": 0.85},
+            "selected": "xgboost",
+        }
 
 
 # ── evaluate_models: single-model selection ────────────────────────────────────

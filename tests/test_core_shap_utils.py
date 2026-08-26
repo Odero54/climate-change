@@ -42,6 +42,26 @@ def test_features_sorted_by_descending_importance():
     assert result["mean_abs_shap"] == sorted(result["mean_abs_shap"], reverse=True)
 
 
+def test_multiclass_gradient_boosting_falls_back_to_model_agnostic_explainer():
+    """shap.TreeExplainer explicitly rejects sklearn's GradientBoostingClassifier
+    for 3+-class problems ('only supported for binary classification right
+    now') — this only surfaced once SHAP started following the actually-
+    selected model (disease's "gbm" option) instead of always using
+    XGBoost. Must fall back to a model-agnostic explainer rather than crash."""
+    from sklearn.ensemble import GradientBoostingClassifier
+
+    rng = np.random.default_rng(3)
+    n = 40
+    X = rng.standard_normal((n, 5))
+    y = np.array([0] * 14 + [1] * 13 + [2] * 13)
+    gbm = GradientBoostingClassifier(n_estimators=20, random_state=42).fit(X, y)
+
+    cols = [f"feat_{i}" for i in range(5)]
+    result = compute_shap_importance(gbm, X[:15], cols)
+    assert sorted(result["features"]) == sorted(cols)
+    assert len(result["mean_abs_shap"]) == 5
+
+
 def test_xgboost_2d_shap_values_also_work():
     """XGBoost's Booster returns a plain (n_samples, n_features) array in
     this shap version — must still work correctly, not just RF's 3D case."""

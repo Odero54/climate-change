@@ -28,8 +28,26 @@ def compute_shap_importance(
     """
     import shap
 
-    explainer = shap.TreeExplainer(model)
-    shap_vals = explainer.shap_values(X_test)
+    try:
+        shap_vals = shap.TreeExplainer(model).shap_values(X_test)
+    except Exception:
+        # TreeExplainer's tree-traversal implementation doesn't support every
+        # estimator/output-shape combination — confirmed live: sklearn's
+        # GradientBoostingClassifier for a 3+-class problem is internally one
+        # independent regressor per class, and shap.TreeExplainer explicitly
+        # rejects that ("GradientBoostingClassifier is only supported for
+        # binary classification right now!"). This only surfaced once SHAP
+        # started following the actually-selected model instead of always
+        # using XGBoost. Fall back to the general, model-agnostic Explainer
+        # (permutation-based, using predict_proba) — slower, but works for
+        # any classifier; only triggered for the shapes TreeExplainer can't
+        # handle. A small fixed background sample keeps it from scaling with
+        # the full test set size.
+        if not hasattr(model, "predict_proba"):
+            raise
+        background = X_test[: min(50, len(X_test))]
+        shap_vals = shap.Explainer(model.predict_proba, background)(X_test).values
+
     arr = np.array(shap_vals) if isinstance(shap_vals, list) else np.asarray(shap_vals)
 
     n_features = len(feature_cols)

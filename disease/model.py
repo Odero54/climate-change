@@ -161,17 +161,16 @@ def pad_gbm_proba(gbm: GradientBoostingClassifier, proba: np.ndarray) -> np.ndar
 
 
 def evaluate_models(
-    gbm: GradientBoostingClassifier,
-    xgb: Booster,
+    gbm: GradientBoostingClassifier | None,
+    xgb: Booster | None,
     X_test: np.ndarray,
     y_test: np.ndarray,
 ) -> dict:
-    """Evaluate GBM, XGBoost, and mean-proba ensemble on the held-out test set."""
-    gbm_pred = gbm.predict(X_test).astype(int)
-    proba_gbm = pad_gbm_proba(gbm, gbm.predict_proba(X_test))
-    proba_xgb = xgb.predict(DMatrix(X_test))
-    xgb_pred = np.argmax(proba_xgb, axis=1).astype(int)
-    ens_pred = np.argmax((proba_gbm + proba_xgb) / 2.0, axis=1).astype(int)
+    """
+    Evaluate whichever of GBM/XGBoost were actually trained (both, for an
+    "ensemble" selection; exactly one otherwise) on the held-out test set,
+    plus their mean-proba ensemble when both are present.
+    """
 
     def _metrics(pred: np.ndarray, label: str) -> dict:
         return {
@@ -181,37 +180,28 @@ def evaluate_models(
             "predictions": pred.tolist(),
         }
 
-    return {
-        "gbm": _metrics(gbm_pred, "Gradient Boosting"),
-        "xgb": _metrics(xgb_pred, "XGBoost"),
-        "ensemble": _metrics(ens_pred, "Ensemble (mean proba)"),
-        "actuals": y_test.tolist(),
-    }
+    proba_gbm = pad_gbm_proba(gbm, gbm.predict_proba(X_test)) if gbm is not None else None
+    proba_xgb = xgb.predict(DMatrix(X_test)) if xgb is not None else None
+
+    result: dict = {"actuals": y_test.tolist()}
+    if proba_gbm is not None:
+        result["gbm"] = _metrics(np.argmax(proba_gbm, axis=1).astype(int), "Gradient Boosting")
+    if proba_xgb is not None:
+        result["xgb"] = _metrics(np.argmax(proba_xgb, axis=1).astype(int), "XGBoost")
+    if proba_gbm is not None and proba_xgb is not None:
+        ens_pred = np.argmax((proba_gbm + proba_xgb) / 2.0, axis=1).astype(int)
+        result["ensemble"] = _metrics(ens_pred, "Ensemble (mean proba)")
+    return result
 
 
-def compute_shap_importance(xgb: Booster, X_test: np.ndarray) -> dict:
-    """
-    TreeExplainer SHAP on XGBoost (always used for SHAP regardless of model_type).
-    Returns features sorted by descending mean |SHAP| averaged across all classes.
-    """
-    import shap
+def compute_shap_importance(
+    model: GradientBoostingClassifier | Booster, X_test: np.ndarray
+) -> dict:
+    """TreeExplainer SHAP values for whichever model was actually selected/trained — see core.shap_utils for the axis-handling details."""
+    from climate_change.core.shap_utils import compute_shap_importance as _compute_shap_importance
 
     X_df = pd.DataFrame(X_test, columns=FEATURE_COLS)
-    explainer = shap.TreeExplainer(xgb)
-    shap_vals = explainer.shap_values(X_df)
-
-    if isinstance(shap_vals, list):
-        mean_abs = np.array([np.abs(sv).mean(axis=0) for sv in shap_vals]).mean(axis=0)
-    elif np.asarray(shap_vals).ndim == 3:
-        mean_abs = np.abs(shap_vals).mean(axis=(0, 2))
-    else:
-        mean_abs = np.abs(shap_vals).mean(axis=0)
-
-    rank_idx = np.argsort(mean_abs)[::-1]
-    return {
-        "features": [FEATURE_COLS[i] for i in rank_idx],
-        "mean_abs_shap": mean_abs[rank_idx].round(4).tolist(),
-    }
+    return _compute_shap_importance(model, X_df, FEATURE_COLS)
 
 
 def detect_hotspots(
@@ -314,17 +304,10 @@ def build_disease_charts(
         "shap": shap_payload,
         "hotspots": hotspots,
         "model_performance": {
-            "gbm": {
-                "f1": eval_result["gbm"]["f1"],
-                "accuracy": eval_result["gbm"]["accuracy"],
-            },
-            "xgb": {
-                "f1": eval_result["xgb"]["f1"],
-                "accuracy": eval_result["xgb"]["accuracy"],
-            },
-            "ensemble": {
-                "f1": eval_result["ensemble"]["f1"],
-                "accuracy": eval_result["ensemble"]["accuracy"],
+            **{
+                key: {"f1": eval_result[key]["f1"], "accuracy": eval_result[key]["accuracy"]}
+                for key in ("gbm", "xgb", "ensemble")
+                if key in eval_result
             },
             "selected": model_type,
         },
@@ -334,12 +317,14 @@ def build_disease_charts(
 class DiseaseModel:
     """
     Orchestrates the full ML pipeline for a single disease surveillance analysis.
-    Always trains Gradient Boosting + XGBoost. config['model_type'] selects which
+    config['model_type'] selects which model(s) are trained and which
     predictions drive the primary risk distribution:
-      "gbm"      — Gradient Boosting (default, highest accuracy per lab)
-      "xgboost"  — XGBoost
-      "ensemble" — mean softmax probabilities of GBM + XGBoost
-    Trained models and scaler are stored on self for use by cog_export.
+      "gbm"      — Gradient Boosting only (default, highest accuracy per lab)
+      "xgboost"  — XGBoost only
+      "ensemble" — both, combined as mean softmax probabilities of GBM + XGBoost
+    Only the selected model type is trained. Trained models and scaler are
+    stored on self for use by cog_export (whichever model wasn't needed
+    stays None).
     """
 
     def __init__(self) -> None:
@@ -380,24 +365,35 @@ class DiseaseModel:
         X_train_s = self.scaler.fit_transform(X_train)
         X_test_s = self.scaler.transform(X_test)
 
-        # Train GBM and XGBoost concurrently when the Dask cluster is running,
+        # Only train what this selection needs — "ensemble" needs both, "gbm"
+        # and "xgboost" need only the one selected. When both are needed,
+        # train them concurrently on the Dask cluster if it's running,
         # otherwise fall back to sequential execution (e.g. during unit tests).
         from climate_change.core.dask_engine import DaskEngine
 
-        client = DaskEngine.get_client_if_running()
+        need_gbm = model_type in ("gbm", "ensemble")
+        need_xgb = model_type in ("xgboost", "ensemble")
+        gbm_meta: dict = {"cv_f1_mean": None, "cv_f1_std": None}
+        xgb_meta: dict = {"cv_f1_mean": None, "cv_f1_std": None}
+
+        client = DaskEngine.get_client_if_running() if (need_gbm and need_xgb) else None
         if client is not None:
             f_gbm = client.submit(train_gbm, X_train_s, y_train, pure=False)
             f_xgb = client.submit(train_xgb, X_train_s, y_train, pure=False)
             (self.gbm, gbm_meta), (self.xgb, xgb_meta) = cast(list, client.gather([f_gbm, f_xgb]))
         else:
-            self.gbm, gbm_meta = train_gbm(X_train_s, y_train)
-            self.xgb, xgb_meta = train_xgb(X_train_s, y_train)
-
-        assert self.gbm is not None
-        assert self.xgb is not None
+            if need_gbm:
+                self.gbm, gbm_meta = train_gbm(X_train_s, y_train)
+            if need_xgb:
+                self.xgb, xgb_meta = train_xgb(X_train_s, y_train)
 
         eval_result = evaluate_models(self.gbm, self.xgb, X_test_s, y_test)
-        shap_payload = compute_shap_importance(self.xgb, X_test_s)
+        if model_type == "gbm":
+            assert self.gbm is not None
+            shap_payload = compute_shap_importance(self.gbm, X_test_s)
+        else:
+            assert self.xgb is not None
+            shap_payload = compute_shap_importance(self.xgb, X_test_s)
 
         # Hotspot detection — applied to all pixels using the selected model
         X_all_s = self.scaler.transform(
@@ -407,10 +403,14 @@ class DiseaseModel:
         result_key = _KEY.get(model_type, "gbm")
 
         if model_type == "gbm":
+            assert self.gbm is not None
             all_preds = self.gbm.predict(X_all_s).astype(int)
         elif model_type == "xgboost":
+            assert self.xgb is not None
             all_preds = np.argmax(self.xgb.predict(DMatrix(X_all_s)), axis=1).astype(int)
         else:
+            assert self.gbm is not None
+            assert self.xgb is not None
             proba_gbm = pad_gbm_proba(self.gbm, self.gbm.predict_proba(X_all_s))
             proba = (proba_gbm + self.xgb.predict(DMatrix(X_all_s))) / 2.0
             all_preds = np.argmax(proba, axis=1).astype(int)
@@ -430,14 +430,14 @@ class DiseaseModel:
             "gbm_cv_f1": round(gbm_meta["cv_f1_mean"], 4)
             if gbm_meta["cv_f1_mean"] is not None
             else None,
-            "gbm_f1": eval_result["gbm"]["f1"],
-            "gbm_accuracy": eval_result["gbm"]["accuracy"],
+            "gbm_f1": eval_result["gbm"]["f1"] if "gbm" in eval_result else None,
+            "gbm_accuracy": eval_result["gbm"]["accuracy"] if "gbm" in eval_result else None,
             "xgb_cv_f1": round(xgb_meta["cv_f1_mean"], 4)
             if xgb_meta["cv_f1_mean"] is not None
             else None,
-            "xgb_f1": eval_result["xgb"]["f1"],
-            "xgb_accuracy": eval_result["xgb"]["accuracy"],
-            "ensemble_f1": eval_result["ensemble"]["f1"],
+            "xgb_f1": eval_result["xgb"]["f1"] if "xgb" in eval_result else None,
+            "xgb_accuracy": eval_result["xgb"]["accuracy"] if "xgb" in eval_result else None,
+            "ensemble_f1": eval_result["ensemble"]["f1"] if "ensemble" in eval_result else None,
             "selected_f1": eval_result[result_key]["f1"],
             "high_risk_pct": round(high_risk_pct, 1),
             "n_hotspot_clusters": len(hotspots),

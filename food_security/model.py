@@ -154,17 +154,16 @@ def pad_rf_proba(rf: RandomForestClassifier, proba: np.ndarray) -> np.ndarray:
 
 
 def evaluate_models(
-    rf: RandomForestClassifier,
-    xgb: Booster,
+    rf: RandomForestClassifier | None,
+    xgb: Booster | None,
     X_test: np.ndarray,
     y_test: np.ndarray,
 ) -> dict:
-    """Evaluate RF, XGBoost, and mean-proba ensemble on the held-out test set."""
-    rf_pred = rf.predict(X_test).astype(int)
-    proba_rf = pad_rf_proba(rf, rf.predict_proba(X_test))
-    proba_xgb = xgb.predict(DMatrix(X_test))
-    xgb_pred = np.argmax(proba_xgb, axis=1).astype(int)
-    ens_pred = np.argmax((proba_rf + proba_xgb) / 2.0, axis=1).astype(int)
+    """
+    Evaluate whichever of RF/XGBoost were actually trained (both, for an
+    "ensemble" selection; exactly one otherwise) on the held-out test set,
+    plus their mean-proba ensemble when both are present.
+    """
 
     def _metrics(pred: np.ndarray, label: str) -> dict:
         return {
@@ -174,37 +173,26 @@ def evaluate_models(
             "predictions": pred.tolist(),
         }
 
-    return {
-        "rf": _metrics(rf_pred, "Random Forest"),
-        "xgb": _metrics(xgb_pred, "XGBoost"),
-        "ensemble": _metrics(ens_pred, "Ensemble (mean proba)"),
-        "actuals": y_test.tolist(),
-    }
+    proba_rf = pad_rf_proba(rf, rf.predict_proba(X_test)) if rf is not None else None
+    proba_xgb = xgb.predict(DMatrix(X_test)) if xgb is not None else None
+
+    result: dict = {"actuals": y_test.tolist()}
+    if proba_rf is not None:
+        result["rf"] = _metrics(np.argmax(proba_rf, axis=1).astype(int), "Random Forest")
+    if proba_xgb is not None:
+        result["xgb"] = _metrics(np.argmax(proba_xgb, axis=1).astype(int), "XGBoost")
+    if proba_rf is not None and proba_xgb is not None:
+        ens_pred = np.argmax((proba_rf + proba_xgb) / 2.0, axis=1).astype(int)
+        result["ensemble"] = _metrics(ens_pred, "Ensemble (mean proba)")
+    return result
 
 
-def compute_shap_importance(xgb: Booster, X_test: np.ndarray) -> dict:
-    """
-    TreeExplainer SHAP on XGBoost (always used for SHAP regardless of model_type).
-    Returns features sorted by descending mean |SHAP| averaged across all classes.
-    """
-    import shap
+def compute_shap_importance(model: RandomForestClassifier | Booster, X_test: np.ndarray) -> dict:
+    """TreeExplainer SHAP values for whichever model was actually selected/trained — see core.shap_utils for the axis-handling details."""
+    from climate_change.core.shap_utils import compute_shap_importance as _compute_shap_importance
 
     X_df = pd.DataFrame(X_test, columns=FEATURE_COLS)
-    explainer = shap.TreeExplainer(xgb)
-    shap_vals = explainer.shap_values(X_df)
-
-    if isinstance(shap_vals, list):
-        mean_abs = np.array([np.abs(sv).mean(axis=0) for sv in shap_vals]).mean(axis=0)
-    elif np.asarray(shap_vals).ndim == 3:
-        mean_abs = np.abs(shap_vals).mean(axis=(0, 2))
-    else:
-        mean_abs = np.abs(shap_vals).mean(axis=0)
-
-    rank_idx = np.argsort(mean_abs)[::-1]
-    return {
-        "features": [FEATURE_COLS[i] for i in rank_idx],
-        "mean_abs_shap": mean_abs[rank_idx].round(4).tolist(),
-    }
+    return _compute_shap_importance(model, X_df, FEATURE_COLS)
 
 
 def build_food_security_charts(
@@ -263,17 +251,10 @@ def build_food_security_charts(
             "vhi_mean": round(vhi_mean, 1),
         },
         "model_performance": {
-            "rf": {
-                "f1": eval_result["rf"]["f1"],
-                "accuracy": eval_result["rf"]["accuracy"],
-            },
-            "xgb": {
-                "f1": eval_result["xgb"]["f1"],
-                "accuracy": eval_result["xgb"]["accuracy"],
-            },
-            "ensemble": {
-                "f1": eval_result["ensemble"]["f1"],
-                "accuracy": eval_result["ensemble"]["accuracy"],
+            **{
+                key: {"f1": eval_result[key]["f1"], "accuracy": eval_result[key]["accuracy"]}
+                for key in ("rf", "xgb", "ensemble")
+                if key in eval_result
             },
             "selected": model_type,
         },
@@ -283,12 +264,14 @@ def build_food_security_charts(
 class FoodSecurityModel:
     """
     Orchestrates the full ML pipeline for a single food security analysis.
-    Always trains Random Forest + XGBoost. config['model_type'] selects which
+    config['model_type'] selects which model(s) are trained and which
     predictions drive the primary risk distribution:
-      "rf"       — Random Forest (default)
-      "xgboost"  — XGBoost
-      "ensemble" — mean softmax probabilities of RF + XGBoost
-    Trained models and scaler are stored on self for use by cog_export.
+      "rf"       — Random Forest only (default)
+      "xgboost"  — XGBoost only
+      "ensemble" — both, combined as mean softmax probabilities of RF + XGBoost
+    Only the selected model type is trained. Trained models and scaler are
+    stored on self for use by cog_export (whichever model wasn't needed
+    stays None).
     """
 
     def __init__(self) -> None:
@@ -333,24 +316,35 @@ class FoodSecurityModel:
         X_train_s = self.scaler.fit_transform(X_train)
         X_test_s = self.scaler.transform(X_test)
 
-        # Train RF and XGBoost concurrently when the Dask cluster is running,
+        # Only train what this selection needs — "ensemble" needs both, "rf"
+        # and "xgboost" need only the one selected. When both are needed,
+        # train them concurrently on the Dask cluster if it's running,
         # otherwise fall back to sequential execution (e.g. during unit tests).
         from climate_change.core.dask_engine import DaskEngine
 
-        client = DaskEngine.get_client_if_running()
+        need_rf = model_type in ("rf", "ensemble")
+        need_xgb = model_type in ("xgboost", "ensemble")
+        rf_meta: dict = {"cv_f1_mean": None, "cv_f1_std": None}
+        xgb_meta: dict = {"cv_f1_mean": None, "cv_f1_std": None}
+
+        client = DaskEngine.get_client_if_running() if (need_rf and need_xgb) else None
         if client is not None:
             f_rf = client.submit(train_rf, X_train_s, y_train, pure=False)
             f_xgb = client.submit(train_xgb, X_train_s, y_train, pure=False)
             (self.rf, rf_meta), (self.xgb, xgb_meta) = cast(list, client.gather([f_rf, f_xgb]))
         else:
-            self.rf, rf_meta = train_rf(X_train_s, y_train)
-            self.xgb, xgb_meta = train_xgb(X_train_s, y_train)
-
-        assert self.rf is not None
-        assert self.xgb is not None
+            if need_rf:
+                self.rf, rf_meta = train_rf(X_train_s, y_train)
+            if need_xgb:
+                self.xgb, xgb_meta = train_xgb(X_train_s, y_train)
 
         eval_result = evaluate_models(self.rf, self.xgb, X_test_s, y_test)
-        shap_payload = compute_shap_importance(self.xgb, X_test_s)
+        if model_type == "rf":
+            assert self.rf is not None
+            shap_payload = compute_shap_importance(self.rf, X_test_s)
+        else:
+            assert self.xgb is not None
+            shap_payload = compute_shap_importance(self.xgb, X_test_s)
 
         # Compute VHI summary scalars from the feature DataFrame
         vci_mean = float(cast(float, df["vci"].mean())) if "vci" in df.columns else 0.0
@@ -376,10 +370,14 @@ class FoodSecurityModel:
         result_key = _KEY.get(model_type, "rf")
 
         if model_type == "rf":
+            assert self.rf is not None
             all_preds = self.rf.predict(X_all_s).astype(int)
         elif model_type == "xgboost":
+            assert self.xgb is not None
             all_preds = np.argmax(self.xgb.predict(DMatrix(X_all_s)), axis=1).astype(int)
         else:
+            assert self.rf is not None
+            assert self.xgb is not None
             proba_rf = pad_rf_proba(self.rf, self.rf.predict_proba(X_all_s))
             proba = (proba_rf + self.xgb.predict(DMatrix(X_all_s))) / 2.0
             all_preds = np.argmax(proba, axis=1).astype(int)
@@ -395,14 +393,14 @@ class FoodSecurityModel:
             "rf_cv_f1": round(rf_meta["cv_f1_mean"], 4)
             if rf_meta["cv_f1_mean"] is not None
             else None,
-            "rf_f1": eval_result["rf"]["f1"],
-            "rf_accuracy": eval_result["rf"]["accuracy"],
+            "rf_f1": eval_result["rf"]["f1"] if "rf" in eval_result else None,
+            "rf_accuracy": eval_result["rf"]["accuracy"] if "rf" in eval_result else None,
             "xgb_cv_f1": round(xgb_meta["cv_f1_mean"], 4)
             if xgb_meta["cv_f1_mean"] is not None
             else None,
-            "xgb_f1": eval_result["xgb"]["f1"],
-            "xgb_accuracy": eval_result["xgb"]["accuracy"],
-            "ensemble_f1": eval_result["ensemble"]["f1"],
+            "xgb_f1": eval_result["xgb"]["f1"] if "xgb" in eval_result else None,
+            "xgb_accuracy": eval_result["xgb"]["accuracy"] if "xgb" in eval_result else None,
+            "ensemble_f1": eval_result["ensemble"]["f1"] if "ensemble" in eval_result else None,
             "selected_f1": eval_result[result_key]["f1"],
             "high_risk_pct": round(high_risk_pct, 1),
             "top_driver": shap_payload["features"][0],

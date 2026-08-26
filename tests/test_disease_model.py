@@ -9,6 +9,7 @@ from xgboost import Booster, DMatrix
 
 from climate_change.disease.model import (
     VALID_MODEL_TYPES,
+    DiseaseModel,
     _safe_cv_folds,
     _safe_stratify,
     detect_hotspots,
@@ -193,3 +194,79 @@ class TestDetectHotspots:
     def test_valid_model_types(self):
         for mt in ("gbm", "xgboost", "ensemble"):
             assert mt in VALID_MODEL_TYPES
+
+
+# ── evaluate_models: single-model selection ────────────────────────────────────
+
+
+class TestEvaluateModelsSingleModel:
+    def test_gbm_none_omits_gbm_and_ensemble_keys(self, trained_disease_models):
+        _, xgb, X_te, y_te = trained_disease_models
+        result = evaluate_models(None, xgb, X_te, y_te)
+        assert "gbm" not in result
+        assert "ensemble" not in result
+        assert "xgb" in result
+
+    def test_xgb_none_omits_xgb_and_ensemble_keys(self, trained_disease_models):
+        gbm, _, X_te, y_te = trained_disease_models
+        result = evaluate_models(gbm, None, X_te, y_te)
+        assert "xgb" not in result
+        assert "ensemble" not in result
+        assert "gbm" in result
+
+
+# ── DiseaseModel.predict: single-model selection trains only that model ────────
+
+
+@pytest.fixture()
+def disease_training_df():
+    rng = np.random.default_rng(7)
+    n = 60
+    df = pd.DataFrame(
+        {
+            "rainfall_4w": rng.standard_normal(n),
+            "temp_mean": rng.uniform(15, 35, n),
+            "ndwi": rng.standard_normal(n),
+            "elevation": rng.uniform(0, 2000, n),
+            "pop_density": rng.standard_normal(n),
+            "ndvi": rng.uniform(-1, 1, n),
+            "land_cover": rng.standard_normal(n),
+            "lon": rng.uniform(30, 31, n),
+            "lat": rng.uniform(-1, 0, n),
+        }
+    )
+    label = np.zeros(n, dtype=int)
+    label[20:40] = 1
+    label[40:] = 2
+    df["label"] = label
+    df["risk_score"] = rng.standard_normal(n)
+    return df
+
+
+class TestDiseaseModelPredictSingleModel:
+    def test_gbm_only_never_trains_xgb(self, disease_training_df):
+        model = DiseaseModel()
+        result = model.predict(disease_training_df, config={"model_type": "gbm"})
+        assert model.gbm is not None
+        assert model.xgb is None
+        assert result["stats"]["xgb_f1"] is None
+        assert result["stats"]["xgb_accuracy"] is None
+        assert result["stats"]["ensemble_f1"] is None
+
+    def test_xgboost_only_never_trains_gbm(self, disease_training_df):
+        model = DiseaseModel()
+        result = model.predict(disease_training_df, config={"model_type": "xgboost"})
+        assert model.xgb is not None
+        assert model.gbm is None
+        assert result["stats"]["gbm_f1"] is None
+        assert result["stats"]["gbm_accuracy"] is None
+        assert result["stats"]["ensemble_f1"] is None
+
+    def test_ensemble_trains_both(self, disease_training_df):
+        model = DiseaseModel()
+        result = model.predict(disease_training_df, config={"model_type": "ensemble"})
+        assert model.gbm is not None
+        assert model.xgb is not None
+        assert result["stats"]["gbm_f1"] is not None
+        assert result["stats"]["xgb_f1"] is not None
+        assert result["stats"]["ensemble_f1"] is not None

@@ -29,8 +29,8 @@ RISK_INT: dict[int, str] = {1: "Low Risk", 2: "Medium Risk", 3: "High Risk"}
 
 
 def predict_food_security_grid(
-    rf_model: RandomForestClassifier,
-    xgb_model: Booster,
+    rf_model: RandomForestClassifier | None,
+    xgb_model: Booster | None,
     scaler: StandardScaler,
     datasets: dict[str, xr.Dataset],
     model_type: str = "rf",
@@ -86,10 +86,14 @@ def predict_food_security_grid(
     if valid_mask.any():
         X_valid = scaler.transform(X_full[valid_mask])
         if model_type == "rf":
+            assert rf_model is not None
             proba = rf_model.predict_proba(X_valid)
         elif model_type == "xgboost":
+            assert xgb_model is not None
             proba = xgb_model.predict(DMatrix(X_valid))
         else:
+            assert rf_model is not None
+            assert xgb_model is not None
             proba_rf = pad_rf_proba(rf_model, rf_model.predict_proba(X_valid))
             proba = (proba_rf + xgb_model.predict(DMatrix(X_valid))) / 2.0
         pred_classes = np.argmax(proba, axis=1).astype(np.uint8) + 1
@@ -127,8 +131,8 @@ def predict_food_security_grid(
 
 
 def export_food_security_cog(
-    rf_model: RandomForestClassifier,
-    xgb_model: Booster,
+    rf_model: RandomForestClassifier | None,
+    xgb_model: Booster | None,
     scaler: StandardScaler,
     datasets: dict[str, xr.Dataset],
     output_dir: str,
