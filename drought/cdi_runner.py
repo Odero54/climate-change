@@ -215,6 +215,29 @@ def _yearly_drought_maps_xee_v1(
     )
 
 
+_ADAPTIVE_GRID_FLOOR_DEG = 0.001  # ~111m at the equator — finer doesn't add
+# real detail given ERA5 (~11km) / MODIS (~1km) native resolution, but gives
+# a small AOI enough pixels to trace its true shape.
+_ADAPTIVE_GRID_TARGET_PIXELS_PER_SIDE = 50
+_ADAPTIVE_GRID_DEFAULT_SCALE_DEG = 0.1  # matches _yearly_drought_maps_xee_v1's own default
+
+
+def _adaptive_grid_scale(
+    bbox: list[float], default_scale: float = _ADAPTIVE_GRID_DEFAULT_SCALE_DEG
+) -> float:
+    """Refine (never coarsen) the CDI map's grid_scale so a small AOI still
+    gets enough pixels to show real spatial detail, instead of being reduced
+    to a near-single-pixel block — confirmed live: a drawn AOI's CDI map
+    rendered as a solid rectangle at the flat 0.1 deg (~11km) default."""
+    lon_min, lat_min, lon_max, lat_max = bbox
+    shorter_side_deg = min(lon_max - lon_min, lat_max - lat_min)
+    if shorter_side_deg <= 0:
+        return default_scale
+    suggested = shorter_side_deg / _ADAPTIVE_GRID_TARGET_PIXELS_PER_SIDE
+    refined = max(_ADAPTIVE_GRID_FLOOR_DEG, suggested)
+    return min(default_scale, refined)
+
+
 def _yearly_drought_maps(
     aoi,
     bbox: list[float],
@@ -231,7 +254,9 @@ def _yearly_drought_maps(
             start_year=start_year,
             end_year=end_year,
         )
-    return _yearly_drought_maps_xee_v1(aoi, bbox, start_year, end_year)
+    return _yearly_drought_maps_xee_v1(
+        aoi, bbox, start_year, end_year, scale=_adaptive_grid_scale(bbox)
+    )
 
 
 def run_cdi_pipeline(raw_data: dict) -> dict:
