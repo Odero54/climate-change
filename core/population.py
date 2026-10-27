@@ -503,9 +503,23 @@ def population_exposure(
     class_grid may hold int-coded classes (disease/flood/food_security/
     land_degradation's risk grids) or string labels (drought's CDI severity
     classes) — GDAL/rasterio's reprojection (used internally to upsample
-    class_grid) only supports numeric dtypes, so a non-numeric class_grid is
-    transparently encoded to small integers before upsampling and decoded
-    back to the original `classes` labels in the returned dict.
+    class_grid) only supports numeric dtypes, so class_grid is always
+    transparently re-encoded to small integers before upsampling and
+    decoded back to the original `classes` tokens in the returned dict.
+
+    Always encodes starting at 1, reserving 0 exclusively for "no match" —
+    never the caller's own class values, even if those start at 0 (e.g.
+    land_degradation's "Not Degraded"/"Degraded" grid uses 0/1).
+    upsample_class_grid's destination array is always zero-initialised, so
+    any pixel reproject() doesn't touch — genuinely outside the classified
+    grid's true extent, e.g. when population was fetched over a larger
+    footprint than the classification — silently reads back as 0 once
+    upsampled; if 0 were also a real class value, every such pixel would be
+    silently misattributed to that class. Confirmed live twice: drought's
+    "Extreme drought" (then encoded as index 0) and separately
+    land_degradation's "Not Degraded" (its own natural index 0) both
+    reporting population wildly disproportionate to their actual area
+    share.
     """
     from rasterio.transform import from_bounds
 
@@ -522,33 +536,16 @@ def population_exposure(
     )
     pop_grid = np.asarray(pop_da.values).astype(np.float64)
 
-    if np.issubdtype(class_grid.dtype, np.number):
-        upsampled_class = upsample_class_grid(
-            class_grid, class_transform, pop_grid.shape, pop_transform
-        )
-        return population_by_class(upsampled_class, pop_grid, classes=classes)
-
-    # Encode starting at 1, never 0: upsample_class_grid's destination array
-    # is always zero-initialised (np.zeros), so any pixel reproject() doesn't
-    # touch — genuinely outside the classified grid's true extent, e.g. when
-    # population was fetched over a larger footprint than the classification
-    # — silently reads back as 0. The numeric-class path (disease/flood/
-    # food_security/land_degradation) is already safe from this because
-    # those risk grids use 1/2/3, never 0. This path previously encoded
-    # starting at 0 (classes[0] == 0, with -1 reserved for "no match" at
-    # *this* step, before reprojection) — but 0 collided with
-    # upsample_class_grid's own "untouched" fill, so every out-of-extent
-    # population pixel was silently misattributed to classes[0]. Confirmed
-    # live: drought's "Extreme drought" (classes[0]) reporting population
-    # wildly disproportionate to its area share relative to every other
-    # class.
     label_to_idx = {label: i + 1 for i, label in enumerate(classes)}
     encoded = np.zeros(class_grid.shape, dtype=np.int32)
     for label, idx in label_to_idx.items():
         encoded[class_grid == label] = idx
     upsampled_encoded = upsample_class_grid(encoded, class_transform, pop_grid.shape, pop_transform)
     by_idx = population_by_class(upsampled_encoded, pop_grid, classes=list(label_to_idx.values()))
-    return {label: by_idx[str(idx)] for label, idx in label_to_idx.items()}
+    # str(label): every caller — numeric-class (disease/flood/food_security/
+    # land_degradation) and string-label (drought) alike — looks this up via
+    # str(class_value), matching population_by_class's own str(cls) keying.
+    return {str(label): by_idx[str(idx)] for label, idx in label_to_idx.items()}
 
 
 def at_risk_population(pop_by_class: dict[str, float], at_risk_labels: list[str]) -> float:

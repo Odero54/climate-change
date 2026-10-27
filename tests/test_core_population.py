@@ -224,6 +224,42 @@ class TestPopulationExposure:
         assert result["a"] < 1000
         assert result["b"] < 1000
 
+    @pytest.mark.parametrize(
+        "module,classes,class_grid_values",
+        [
+            # land_degradation: classes start at 0 ("Not Degraded") — the
+            # exact case confirmed live (Turkana AOI reporting 356M+ people).
+            ("land_degradation", [0, 1], [0, 1]),
+            ("disease", [1, 2, 3], [1, 2]),
+            ("food_security", [1, 2, 3], [1, 2]),
+            ("flood", [1, 2, 3, 4], [1, 2]),
+            (
+                "drought",
+                ["Extreme drought", "Severe drought", "Near normal"],
+                ["Extreme drought", "Near normal"],
+            ),
+        ],
+    )
+    def test_out_of_extent_population_never_leaks_for_any_module(
+        self, module, classes, class_grid_values
+    ):
+        """Every module's real classes= list, reproduced against a
+        class_grid smaller than the population grid — the out-of-extent
+        half must never be counted under any class, for any module
+        (previously only class[0] was checked per-module; this exercises
+        every module's actual production class list in one place so a
+        future module/class-list change can't silently reintroduce this)."""
+        dtype = object if isinstance(classes[0], str) else np.int32
+        class_grid = np.array([[class_grid_values[0]], [class_grid_values[1]]], dtype=dtype)
+        class_transform = from_bounds(0, 0, 1, 2, 1, 2)
+        pop_ds = self._make_population_ds(
+            [[10.0, 1_000_000.0], [30.0, 1_000_000.0]], lons=[0.5, 1.5], lats=[1.5, 0.5]
+        )
+        result = population_exposure(class_grid, class_transform, pop_ds, classes=classes)
+        assert sum(result.values()) < 1000, (
+            f"{module}: out-of-extent population leaked into a class total ({sum(result.values())})"
+        )
+
 
 class TestAtRiskPopulation:
     def test_sums_requested_labels(self):
