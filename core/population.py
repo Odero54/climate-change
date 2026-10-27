@@ -223,22 +223,40 @@ def _fetch_population_count_gee(
     fetch_population_count treats that the same as an outright failure and
     falls back to worldpop.org's own catalog (_fetch_population_count_worldpop_org).
 
-    Always fetches at (up to) the native ~100 m resolution regardless of the
-    requested `scale` — i.e. min(scale, 100). An earlier version of this
-    function used ee.Image.reduceResolution(Reducer.sum()) to downsample to a
-    domain's coarser working scale before download, on the assumption that
-    would sum native pixels into each output pixel. Verified against live GEE
-    data this was wrong: reduceResolution's default area-weighting turns
-    sum() into something closer to a coverage fraction (single-pixel test:
-    output value was ~1 instead of the true ~25/~100 contributing pixels),
-    and even with `.unweighted()` the boundary handling still over-counted by
-    20-60%+ against a server-side reduceRegion ground truth, including at a
-    realistic ~100km county-sized AOI (not just a small edge-effect-prone
-    test box). There is no reliable way found to make GEE aggregate this
-    correctly server-side, so this function never downsamples population at
-    all — see population_exposure() below for how the resolution mismatch
-    with a domain's coarser risk-classification grid is actually handled (by
+    Always fetches at exactly the native ~100 m resolution, regardless of the
+    requested `scale` — never coarser AND never finer.
+
+    Never coarser: an earlier version of this function used
+    ee.Image.reduceResolution(Reducer.sum()) to downsample to a domain's
+    coarser working scale before download, on the assumption that would sum
+    native pixels into each output pixel. Verified against live GEE data this
+    was wrong: reduceResolution's default area-weighting turns sum() into
+    something closer to a coverage fraction (single-pixel test: output value
+    was ~1 instead of the true ~25/~100 contributing pixels), and even with
+    `.unweighted()` the boundary handling still over-counted by 20-60%+
+    against a server-side reduceRegion ground truth, including at a realistic
+    ~100km county-sized AOI (not just a small edge-effect-prone test box).
+    There is no reliable way found to make GEE aggregate this correctly
+    server-side, so this function never downsamples population at all — see
+    population_exposure() below for how the resolution mismatch with a
+    domain's coarser risk-classification grid is actually handled (by
     upsampling the *classification*, not downsampling the population).
+
+    Never finer: a small AOI can legitimately request a working `scale`
+    below 100m (see analysis_service._adaptive_scale on the arin-dss side,
+    which refines a small drawn AOI's risk-raster resolution well below the
+    historical 100m floor). WorldPop has no genuine sub-100m detail, and
+    GEE's getDownloadURL at a finer scale than an image's native resolution
+    doesn't aggregate or divide anything — it just resamples, copying each
+    native ~100m cell's full value across every finer output pixel that
+    falls inside it. Summing those pixels (population_by_class's zonal sum)
+    then overcounts by roughly (100 / scale)^2 — confirmed live: population
+    exposure figures reported as "way too high" after a scale this fine was
+    introduced upstream. A plain `min(scale, _NATIVE_SCALE)` only guards the
+    "never coarser" direction (picks the smaller/finer of the two, which is
+    *larger* than native when `scale` > 100, but smaller — finer — than
+    native when `scale` < 100); fetching here is pinned to exactly
+    `_NATIVE_SCALE` so neither direction can corrupt totals.
 
     Returns Dataset with variable 'population', values in people-per-pixel,
     already masked (0.0) where WorldPop's -99999 nodata sentinel appears —
@@ -264,7 +282,9 @@ def _fetch_population_count_gee(
         .filter(ee.Filter.eq("year", year))
     )
     pop_img = _require_population_image(pop_collection, year).select("population").clip(aoi)
-    fetch_scale = min(scale, _NATIVE_SCALE)
+    # Deliberately ignores the caller's `scale` — see the docstring's "never
+    # finer" section for why this must always be exactly native resolution.
+    fetch_scale = _NATIVE_SCALE
 
     tiles = _split_bbox_into_tiles(min_lon, min_lat, max_lon, max_lat, fetch_scale)
 
