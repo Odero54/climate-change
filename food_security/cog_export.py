@@ -73,6 +73,7 @@ def predict_food_security_grid(
     transform = vci_tci_ds["vci"].rio.transform()
     crs = vci_tci_ds["vci"].rio.crs or "EPSG:4326"
     geometries = _aoi_geometries(aoi_geojson)
+    n_aoi_pixels: int | None = None
     if geometries:
         inside_aoi = geometry_mask(
             geometries,
@@ -80,6 +81,7 @@ def predict_food_security_grid(
             transform=transform,
             invert=True,
         ).reshape(-1)
+        n_aoi_pixels = int(inside_aoi.sum())
         valid_mask = valid_mask & inside_aoi
 
     risk_grid: np.ndarray = np.zeros(n_lat * n_lon, dtype=np.uint8)
@@ -125,6 +127,7 @@ def predict_food_security_grid(
         "counts": counts.astype(int).tolist(),
         "percentages": percentages,
         "valid_pixel_count": total,
+        "n_aoi_pixels": n_aoi_pixels,
         "population_by_class": population_by_class,
         "total_population": total_population,
     }

@@ -335,6 +335,23 @@ def build_drought_charts(features: dict) -> dict:
     ds = features.get("cdi_maps")
     latest = ds["CDI"].isel(time=-1).values if ds is not None else np.array([])
     valid = latest[np.isfinite(latest)]
+    # Pixel count geometrically inside the AOI polygon (before water/nodata
+    # masking) — the denominator `valid.size` should be measured against, so
+    # that _valid_area_ha can correct for excluded area (lakes, cloud gaps)
+    # rather than redistributing it into real severity classes.
+    n_aoi_pixels: int | None = None
+    aoi_geojson = features.get("aoi_geojson")
+    if ds is not None and aoi_geojson:
+        geometries = _aoi_geometries(aoi_geojson)
+        if geometries:
+            lat_dim, lon_dim = _spatial_dims(ds)
+            inside_aoi = geometry_mask(
+                geometries,
+                out_shape=(len(ds[lat_dim]), len(ds[lon_dim])),
+                transform=_dataset_transform(ds),
+                invert=True,
+            )
+            n_aoi_pixels = int(inside_aoi.sum())
     total_population: float | None = None
     population_affected: float | None = None
     pop_by_class: dict[str, float] = {}
@@ -384,6 +401,7 @@ def build_drought_charts(features: dict) -> dict:
         "colors": [DROUGHT_CLASS_COLORS.get(str(label), "#95A5A6") for label in labels],
         "basis": "latest_spatial_aoi",
         "valid_pixel_count": int(valid.size),
+        "n_aoi_pixels": n_aoi_pixels,
     }
     if total_population is not None:
         severity["data_population"] = [pop_by_class.get(label, 0.0) for label in labels]
