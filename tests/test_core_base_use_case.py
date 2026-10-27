@@ -16,6 +16,7 @@ from climate_change.core.base_use_case import (
     _ee_geometry_from_geojson,
     _lons_lats,
     _round_floats,
+    _valid_area_ha,
 )
 
 # ── _round_floats ─────────────────────────────────────────────────────────────
@@ -148,6 +149,56 @@ class TestAoiAreaHa:
 
     def test_malformed_geometry_returns_none(self):
         assert _aoi_area_ha({"type": "NotAGeometry"}) is None
+
+
+# ── _valid_area_ha ──────────────────────────────────────────────────────────────
+
+
+class TestValidAreaHa:
+    def test_scales_down_by_excluded_fraction(self):
+        """Turkana/flood scenario: ~77,000 km^2 total AOI, ~6,750 km^2 of which
+        is Lake Turkana (excluded as permanent water before percentages are
+        computed). Feeding the full AOI area straight to _attach_risk_area
+        would redistribute the lake's area into real risk classes — this
+        should instead scale total_area_ha down to the valid (non-water)
+        fraction before any percentage math happens."""
+        total_area_ha = 7_700_000.0
+        n_aoi_pixels = 10_000
+        valid_pixel_count = 9_125  # 91.25% of the AOI grid is non-water
+        valid_area_ha = _valid_area_ha(total_area_ha, valid_pixel_count, n_aoi_pixels)
+        assert valid_area_ha == pytest.approx(7_026_250.0)
+
+    def test_all_pixels_valid_returns_full_area(self):
+        assert _valid_area_ha(1000.0, 50, 50) == pytest.approx(1000.0)
+
+    def test_none_total_area_returns_none(self):
+        assert _valid_area_ha(None, 50, 100) is None
+
+    def test_zero_total_area_returns_falsy(self):
+        assert not _valid_area_ha(0.0, 50, 100)
+
+    def test_none_n_aoi_pixels_falls_back_to_total_area(self):
+        """No AOI geometry was available to compute a denominator against —
+        fall back to the (uncorrected) total rather than raising/dividing by
+        zero, matching the pre-fix behaviour for that edge case."""
+        assert _valid_area_ha(1000.0, 50, None) == 1000.0
+
+    def test_zero_n_aoi_pixels_falls_back_to_total_area(self):
+        assert _valid_area_ha(1000.0, 0, 0) == 1000.0
+
+    def test_none_valid_pixel_count_falls_back_to_total_area(self):
+        assert _valid_area_ha(1000.0, None, 100) == 1000.0
+
+    def test_attach_risk_area_with_valid_area_does_not_overcount(self):
+        """End-to-end: percentages summing to 100% of valid pixels, scaled by
+        the corrected valid_area_ha, must sum back to valid_area_ha — not the
+        full (water-inclusive) total_area_ha."""
+        total_area_ha = 7_700_000.0
+        valid_area_ha = _valid_area_ha(total_area_ha, 9_125, 10_000)
+        chart = {"labels": ["Very High", "High", "Medium", "Low"], "data": [10.0, 20.0, 30.0, 40.0]}
+        _attach_risk_area(chart, valid_area_ha)
+        assert sum(chart["area_ha"]) == pytest.approx(valid_area_ha)
+        assert sum(chart["area_ha"]) < total_area_ha
 
 
 # ── _attach_risk_area ─────────────────────────────────────────────────────────

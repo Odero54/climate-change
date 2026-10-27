@@ -13,8 +13,10 @@ from climate_change.core.base_use_case import (
     AnalysisConfig,
     AnalysisOutput,
     BaseUseCase,
+    _aoi_area_ha,
     _ee_geometry_from_geojson,
     _lons_lats,
+    _valid_area_ha,
 )
 from climate_change.core.dask_engine import DaskEngine
 from climate_change.core.gee_auth import ensure_gee
@@ -32,35 +34,6 @@ from .features import (
     sample_training_data,
 )
 from .model import FoodSecurityModel
-
-
-def _aoi_area_ha(aoi_geojson: dict | None) -> float | None:
-    if not aoi_geojson:
-        return None
-    try:
-        from pyproj import Geod
-        from shapely.geometry import shape
-
-        geom = shape(aoi_geojson)
-        area_m2, _ = Geod(ellps="WGS84").geometry_area_perimeter(geom)
-        return abs(float(area_m2)) / 10_000.0
-    except Exception:
-        _log.warning("AOI area calculation failed; area stats will be omitted", exc_info=True)
-        return None
-
-
-def _attach_risk_area(charts: dict, total_area_ha: float | None) -> None:
-    if not total_area_ha:
-        return
-    risk_dist = charts.get("riskDist")
-    if not isinstance(risk_dist, dict):
-        return
-    percentages = risk_dist.get("data")
-    if not isinstance(percentages, list):
-        return
-    areas = [round(total_area_ha * (float(pct) / 100.0), 2) for pct in percentages]
-    risk_dist["area_ha"] = areas
-    risk_dist["data_ha"] = areas
 
 
 def _bbox_from_geojson(aoi_geojson: dict) -> list[float]:
@@ -123,10 +96,12 @@ class FoodSecurityUseCase(BaseUseCase):
             model_type=model_type,
             aoi_geojson=config.aoi_geojson,
         )
-        self._apply_spatial_risk_summary(result, spatial_grid, total_area_ha)
+        valid_area_ha = _valid_area_ha(
+            total_area_ha, spatial_grid["valid_pixel_count"], spatial_grid["n_aoi_pixels"]
+        )
+        self._apply_spatial_risk_summary(result, spatial_grid, valid_area_ha)
         if total_area_ha:
             result["stats"]["total_area_ha"] = round(total_area_ha, 1)
-            _attach_risk_area(result.get("charts", {}), total_area_ha)
         raster_paths: dict[str, str] | None = None
         raster_error: str | None = None
         try:
@@ -256,10 +231,12 @@ class FoodSecurityUseCase(BaseUseCase):
             model_type=config.get("model_type", "rf"),
             aoi_geojson=config.get("aoi_geojson"),
         )
-        self._apply_spatial_risk_summary(result, spatial_grid, total_area_ha)
+        valid_area_ha = _valid_area_ha(
+            total_area_ha, spatial_grid["valid_pixel_count"], spatial_grid["n_aoi_pixels"]
+        )
+        self._apply_spatial_risk_summary(result, spatial_grid, valid_area_ha)
         if total_area_ha:
             result["stats"]["total_area_ha"] = round(total_area_ha, 1)
-            _attach_risk_area(result.get("charts", {}), total_area_ha)
 
         cog_paths: dict[str, str] | None = None
         try:
@@ -292,7 +269,7 @@ class FoodSecurityUseCase(BaseUseCase):
     def _apply_spatial_risk_summary(
         result: dict,
         spatial_grid: dict,
-        total_area_ha: float | None,
+        valid_area_ha: float | None,
     ) -> None:
         labels = ["Low Risk", "Medium Risk", "High Risk"]
         colors = ["#184c09", "#ffcc36", "#f22d06"]
@@ -307,8 +284,8 @@ class FoodSecurityUseCase(BaseUseCase):
             "basis": "full_spatial_aoi",
             "valid_pixel_count": int(spatial_grid["valid_pixel_count"]),
         }
-        if total_area_ha:
-            areas = [round(total_area_ha * (float(pct) / 100.0), 2) for pct in percentages]
+        if valid_area_ha:
+            areas = [round(valid_area_ha * (float(pct) / 100.0), 2) for pct in percentages]
             risk_dist["area_ha"] = areas
             risk_dist["data_ha"] = areas
 

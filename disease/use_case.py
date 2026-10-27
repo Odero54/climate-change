@@ -15,6 +15,7 @@ from climate_change.core.base_use_case import (
     _attach_risk_area,
     _ee_geometry_from_geojson,
     _lons_lats,
+    _valid_area_ha,
 )
 
 _log = logging.getLogger(__name__)
@@ -139,7 +140,12 @@ class DiseaseRiskUseCase(BaseUseCase):
         total_area_ha = _aoi_area_ha(config.aoi_geojson)
         if total_area_ha:
             result["stats"]["total_area_ha"] = round(total_area_ha, 1)
-            _attach_risk_area(result.get("charts", {}).get("riskDist"), total_area_ha)
+            valid_area_ha = _valid_area_ha(
+                total_area_ha,
+                raster_result["valid_pixel_count"] if raster_result else None,
+                raster_result["n_aoi_pixels"] if raster_result else None,
+            )
+            _attach_risk_area(result.get("charts", {}).get("riskDist"), valid_area_ha)
         _attach_population_stats(result, raster_result)
 
         geojson_features = []
@@ -278,7 +284,12 @@ class DiseaseRiskUseCase(BaseUseCase):
         total_area_ha = _aoi_area_ha(config.get("aoi_geojson"))
         if total_area_ha:
             result["stats"]["total_area_ha"] = round(total_area_ha, 1)
-            _attach_risk_area(result.get("charts", {}).get("riskDist"), total_area_ha)
+            valid_area_ha = _valid_area_ha(
+                total_area_ha,
+                raster_result["valid_pixel_count"] if raster_result else None,
+                raster_result["n_aoi_pixels"] if raster_result else None,
+            )
+            _attach_risk_area(result.get("charts", {}).get("riskDist"), valid_area_ha)
         _attach_population_stats(result, raster_result)
 
         result["stats"].update(

@@ -11,6 +11,7 @@ from climate_change.core.base_use_case import (
     _attach_risk_area,
     _ee_geometry_from_geojson,
     _lons_lats,
+    _valid_area_ha,
 )
 from climate_change.core.dask_engine import DaskEngine
 from climate_change.core.gee_auth import ensure_gee
@@ -151,7 +152,12 @@ class FloodRiskUseCase(BaseUseCase):
             total_area_ha = _aoi_area_ha(config.aoi_geojson)
             if total_area_ha:
                 result["stats"]["total_area_ha"] = round(total_area_ha, 1)
-                _attach_risk_area(result["charts"]["risk_distribution"], total_area_ha)
+                valid_area_ha = _valid_area_ha(
+                    total_area_ha,
+                    distribution["valid_pixel_count"],
+                    raster_result["n_aoi_pixels"] if raster_result else None,
+                )
+                _attach_risk_area(result["charts"]["risk_distribution"], valid_area_ha)
             _attach_population_stats(result, raster_result, labels)
 
         geojson_features = []
@@ -333,7 +339,12 @@ class FloodRiskUseCase(BaseUseCase):
             total_area_ha = _aoi_area_ha(config.get("aoi_geojson"))
             if total_area_ha:
                 result["stats"]["total_area_ha"] = round(total_area_ha, 1)
-                _attach_risk_area(result["charts"]["risk_distribution"], total_area_ha)
+                valid_area_ha = _valid_area_ha(
+                    total_area_ha,
+                    distribution["valid_pixel_count"],
+                    raster_result["n_aoi_pixels"] if raster_result else None,
+                )
+                _attach_risk_area(result["charts"]["risk_distribution"], valid_area_ha)
             _attach_population_stats(result, raster_result, labels)
         return result
 

@@ -104,6 +104,34 @@ def _aoi_area_ha(aoi_geojson: dict | None) -> float | None:
         return None
 
 
+def _valid_area_ha(
+    total_area_ha: float | None,
+    valid_pixel_count: int | float | None,
+    n_aoi_pixels: int | None,
+) -> float | None:
+    """Area actually represented by a chart's percentages, in hectares.
+
+    A chart's `data` percentages sum to 100% of *valid* pixels only — water
+    bodies and nodata gaps are excluded before the percentages are computed
+    (see e.g. flood/cog_export.py's `valid_values = data[data > 0]`). Passing
+    the full AOI's geodesic area (`total_area_ha`, from `_aoi_area_ha`)
+    straight into `_attach_risk_area` silently redistributes that excluded
+    area into whichever risk classes were actually mapped, since
+    `sum(percentages) == 100` forces `sum(area_ha) == total_area_ha`
+    regardless of how much of the AOI was excluded. Confirmed to overcount
+    by ~9.6% for Turkana/flood (a lake-heavy county) before this fix.
+
+    `n_aoi_pixels` is the pixel count geometrically inside the AOI polygon
+    (before any water/nodata masking) — the true denominator against which
+    `valid_pixel_count` is a fraction. Falls back to `total_area_ha`
+    unscaled when `n_aoi_pixels` is unavailable (no AOI geometry was
+    supplied, so there is nothing to correct against).
+    """
+    if not total_area_ha or not n_aoi_pixels or valid_pixel_count is None:
+        return total_area_ha
+    return total_area_ha * float(valid_pixel_count) / n_aoi_pixels
+
+
 def _attach_risk_area(chart: dict | None, total_area_ha: float | None) -> None:
     """Distribute total_area_ha across a chart's percentage classes in place.
 

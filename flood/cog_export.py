@@ -32,6 +32,7 @@ class FloodCogResult(TypedDict):
     flood_risk: str
     population_by_class: dict[str, float]
     total_population: float | None
+    n_aoi_pixels: int | None
 
 
 def flood_raster_distribution(path: str | Path) -> dict:
@@ -125,6 +126,7 @@ def export_flood_cog(
     transform = terrain["elevation"].rio.transform()
     crs = terrain["elevation"].rio.crs or "EPSG:4326"
     geometries = _aoi_geometries(aoi_geojson)
+    n_aoi_pixels: int | None = None
     if geometries:
         inside_aoi = geometry_mask(
             geometries,
@@ -132,6 +134,7 @@ def export_flood_cog(
             transform=transform,
             invert=True,
         ).reshape(-1)
+        n_aoi_pixels = int(inside_aoi.sum())
         valid_mask = valid_mask & inside_aoi
 
     X_valid = X_full[valid_mask]
@@ -202,4 +205,5 @@ def export_flood_cog(
         "flood_risk": str(cog_path),
         "population_by_class": population_by_class,
         "total_population": total_population,
+        "n_aoi_pixels": n_aoi_pixels,
     }

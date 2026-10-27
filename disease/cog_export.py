@@ -24,6 +24,8 @@ _log = logging.getLogger(__name__)
 class DiseaseCogResult(TypedDict):
     disease_risk: str
     risk_pct: list[float]
+    valid_pixel_count: int
+    n_aoi_pixels: int | None
     population_by_class: dict[str, float]
     total_population: float | None
 
@@ -119,6 +121,7 @@ def export_disease_cog(
     risk_grid: np.ndarray = np.zeros(n_lat * n_lon, dtype=np.uint8)
     risk_grid[valid_mask] = pred_classes
     risk_grid = risk_grid.reshape(n_lat, n_lon)
+    n_aoi_pixels: int | None = None
     if aoi_geojson:
         inside_aoi = geometry_mask(
             [aoi_geojson],
@@ -126,6 +129,7 @@ def export_disease_cog(
             transform=transform,
             invert=True,
         )
+        n_aoi_pixels = int(inside_aoi.sum())
         risk_grid[~inside_aoi] = 0
 
     population_by_class: dict[str, float] = {}
@@ -164,6 +168,8 @@ def export_disease_cog(
     return {
         "disease_risk": str(cog_path),
         "risk_pct": risk_pct,
+        "valid_pixel_count": int(n_valid),
+        "n_aoi_pixels": n_aoi_pixels,
         "population_by_class": population_by_class,
         "total_population": total_population,
     }

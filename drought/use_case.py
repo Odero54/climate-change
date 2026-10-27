@@ -16,6 +16,7 @@ from climate_change.core.base_use_case import (
     _attach_risk_area,
     _lons_lats,
     _round_floats,
+    _valid_area_ha,
 )
 from climate_change.core.cache import feature_cache
 from climate_change.core.dask_engine import DaskEngine
@@ -93,9 +94,15 @@ class DroughtUseCase(BaseUseCase):
         model_type = config.extra_params.get("model_type", "lstm")
         result = DroughtModel().predict(features, {"model_type": model_type})
         total_area_ha = _aoi_area_ha(config.aoi_geojson)
+        severity = result["charts"].get("severity_distribution")
         if total_area_ha:
             result["stats"]["total_area_ha"] = round(total_area_ha, 1)
-            _attach_risk_area(result["charts"].get("severity_distribution"), total_area_ha)
+            valid_area_ha = _valid_area_ha(
+                total_area_ha,
+                severity.get("valid_pixel_count") if severity else None,
+                severity.get("n_aoi_pixels") if severity else None,
+            )
+            _attach_risk_area(severity, valid_area_ha)
         geojson = self._cdi_to_geojson(features, config.aoi_geojson)
         raster_paths: dict[str, str] | None = None
         raster_error: str | None = None
@@ -148,9 +155,15 @@ class DroughtUseCase(BaseUseCase):
         result["raster"] = {k: str(v) for k, v in cog_paths.items()}
 
         total_area_ha = _aoi_area_ha(config.get("aoi_geojson"))
+        severity = result["charts"].get("severity_distribution")
         if total_area_ha:
             result["stats"]["total_area_ha"] = round(total_area_ha, 1)
-            _attach_risk_area(result["charts"].get("severity_distribution"), total_area_ha)
+            valid_area_ha = _valid_area_ha(
+                total_area_ha,
+                severity.get("valid_pixel_count") if severity else None,
+                severity.get("n_aoi_pixels") if severity else None,
+            )
+            _attach_risk_area(severity, valid_area_ha)
         return result
 
     def run_date_ranges(self, config: dict, date_ranges: list[dict]) -> list[dict]:
