@@ -200,6 +200,30 @@ class TestPopulationExposure:
         assert result["2"] == 0.0
         assert result["1"] == pytest.approx(100.0)
 
+    def test_string_labelled_grid_smaller_than_population_extent_does_not_leak_into_first_class(
+        self,
+    ):
+        """Regression test: when the classified grid's true extent is smaller
+        than the population grid it's upsampled onto (e.g. population fetched
+        over a larger footprint than the classification), reproject() leaves
+        population pixels outside the classified extent untouched in
+        upsample_class_grid's zero-initialised destination array. Those
+        pixels must not be silently counted as classes[0] — confirmed live:
+        drought's "Extreme drought" (classes[0]) reported population wildly
+        disproportionate to its actual area share."""
+        # class_grid covers only the left half of the population grid's extent
+        # (lon 0-1 of a 0-2 range) — the right half is genuinely unclassified.
+        class_grid = np.array([["a"], ["b"]], dtype=object)
+        class_transform = from_bounds(0, 0, 1, 2, 1, 2)
+        pop_ds = self._make_population_ds(
+            [[10.0, 1_000_000.0], [30.0, 1_000_000.0]], lons=[0.5, 1.5], lats=[1.5, 0.5]
+        )
+        result = population_exposure(class_grid, class_transform, pop_ds, classes=["a", "b"])
+        # The huge right-half population values must not leak into either
+        # class, especially not "a" (classes[0] — the previously-buggy case).
+        assert result["a"] < 1000
+        assert result["b"] < 1000
+
 
 class TestAtRiskPopulation:
     def test_sums_requested_labels(self):

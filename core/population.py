@@ -528,8 +528,22 @@ def population_exposure(
         )
         return population_by_class(upsampled_class, pop_grid, classes=classes)
 
-    label_to_idx = {label: i for i, label in enumerate(classes)}
-    encoded = np.full(class_grid.shape, -1, dtype=np.int32)
+    # Encode starting at 1, never 0: upsample_class_grid's destination array
+    # is always zero-initialised (np.zeros), so any pixel reproject() doesn't
+    # touch — genuinely outside the classified grid's true extent, e.g. when
+    # population was fetched over a larger footprint than the classification
+    # — silently reads back as 0. The numeric-class path (disease/flood/
+    # food_security/land_degradation) is already safe from this because
+    # those risk grids use 1/2/3, never 0. This path previously encoded
+    # starting at 0 (classes[0] == 0, with -1 reserved for "no match" at
+    # *this* step, before reprojection) — but 0 collided with
+    # upsample_class_grid's own "untouched" fill, so every out-of-extent
+    # population pixel was silently misattributed to classes[0]. Confirmed
+    # live: drought's "Extreme drought" (classes[0]) reporting population
+    # wildly disproportionate to its area share relative to every other
+    # class.
+    label_to_idx = {label: i + 1 for i, label in enumerate(classes)}
+    encoded = np.zeros(class_grid.shape, dtype=np.int32)
     for label, idx in label_to_idx.items():
         encoded[class_grid == label] = idx
     upsampled_encoded = upsample_class_grid(encoded, class_transform, pop_grid.shape, pop_transform)
