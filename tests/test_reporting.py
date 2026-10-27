@@ -329,3 +329,104 @@ class TestStatsRows:
         )
         rows = self._builder()._stats_rows(output)
         assert dict(rows)["Trend is statistically significant"] == "Yes"
+
+
+class TestCallToAction:
+    """The Call to Action section is one plain-language paragraph aimed at
+    a county government official or NGO practitioner — severity-driven:
+    a significant climate shock gets a direct intervention recommendation,
+    otherwise proactive monitoring guidance."""
+
+    def _builder(self) -> ReportBuilder:
+        builder = ReportBuilder.__new__(ReportBuilder)
+        builder._styles = _styles()
+        return builder
+
+    def _output(self, module: str, stats: dict) -> AnalysisOutput:
+        return AnalysisOutput(
+            module=module,
+            geojson={},
+            raster_path=None,
+            stats=stats,
+            shap=None,
+            charts={},
+            metadata={"admin_name": "Example County", "country": "Kenya"},
+        )
+
+    def test_flood_severe_recommends_intervention(self):
+        output = self._output("flood", {"very_high_risk_pct": 20.0, "high_risk_pct": 15.0})
+        text = self._builder()._call_to_action(output)
+        assert "needs intervention" in text
+        assert "Example County" in text
+
+    def test_flood_not_severe_recommends_monitoring(self):
+        output = self._output("flood", {"very_high_risk_pct": 2.0, "high_risk_pct": 5.0})
+        text = self._builder()._call_to_action(output)
+        assert "needs intervention" not in text
+        assert "no emergency response is needed" in text.lower()
+
+    def test_food_security_severe_recommends_intervention(self):
+        output = self._output("food_security", {"high_risk_pct": 40.0})
+        text = self._builder()._call_to_action(output)
+        assert "needs intervention" in text
+
+    def test_food_security_not_severe_recommends_monitoring(self):
+        output = self._output("food_security", {"high_risk_pct": 10.0})
+        text = self._builder()._call_to_action(output)
+        assert "needs intervention" not in text
+
+    def test_disease_hotspot_cluster_alone_triggers_intervention(self):
+        output = self._output("disease", {"high_risk_pct": 5.0, "n_hotspot_clusters": 2})
+        text = self._builder()._call_to_action(output)
+        assert "needs intervention" in text
+        assert "2 identified hotspot cluster" in text
+
+    def test_disease_low_risk_no_clusters_recommends_monitoring(self):
+        output = self._output("disease", {"high_risk_pct": 5.0, "n_hotspot_clusters": 0})
+        text = self._builder()._call_to_action(output)
+        assert "needs intervention" not in text
+
+    def test_land_degradation_significant_trend_alone_triggers_intervention(self):
+        output = self._output(
+            "land_degradation", {"degraded_label_pct": 5.0, "mk_significant": True}
+        )
+        text = self._builder()._call_to_action(output)
+        assert "needs intervention" in text
+        assert "statistically significant" in text
+
+    def test_land_degradation_low_and_insignificant_recommends_monitoring(self):
+        output = self._output(
+            "land_degradation", {"degraded_label_pct": 5.0, "mk_significant": False}
+        )
+        text = self._builder()._call_to_action(output)
+        assert "needs intervention" not in text
+
+    def test_drought_severe_cdi_recommends_intervention(self):
+        output = self._output("drought", {"latest_mean_cdi": 0.4})
+        text = self._builder()._call_to_action(output)
+        assert "needs intervention" in text
+        assert "calls for action now" in text
+
+    def test_drought_normal_cdi_recommends_monitoring(self):
+        output = self._output("drought", {"latest_mean_cdi": 0.95})
+        text = self._builder()._call_to_action(output)
+        assert "calls for action now" not in text
+        assert "no emergency response is needed" in text.lower()
+
+    def test_unknown_module_falls_back_to_generic_guidance(self):
+        output = self._output("something_new", {})
+        text = self._builder()._call_to_action(output)
+        assert "local stakeholders" in text
+
+    def test_is_a_single_paragraph(self):
+        output = self._output("flood", {"very_high_risk_pct": 20.0, "high_risk_pct": 15.0})
+        text = self._builder()._call_to_action(output)
+        assert "\n" not in text.strip()
+
+    def test_add_call_to_action_appends_heading_and_paragraph(self):
+        story: list = []
+        output = self._output("flood", {"very_high_risk_pct": 20.0, "high_risk_pct": 15.0})
+        self._builder()._add_call_to_action(story, output)
+        rendered = "\n".join(getattr(item, "text", "") for item in story)
+        assert "Call to Action" in rendered
+        assert "needs intervention" in rendered

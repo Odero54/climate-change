@@ -217,6 +217,8 @@ class ReportBuilder:
         elif output.module == "land_degradation":
             self._add_land_degradation_sections(story, output)
 
+        self._add_call_to_action(story, output)
+
         if ai_interpretation:
             self._add_ai_section(story, ai_interpretation)
 
@@ -2998,6 +3000,117 @@ class ReportBuilder:
             )
             story.append(tbl)
             story.append(Spacer(1, 0.4 * cm))
+
+    def _call_to_action(self, output: AnalysisOutput) -> str:
+        """One paragraph of plain-language, decision-oriented guidance for a
+        county government official or NGO practitioner — not a technical
+        summary, a "so what do I do now" takeaway. Severity-driven: an area
+        with a significant climate shock gets a direct intervention
+        recommendation; otherwise, proactive monitoring guidance."""
+        stats = output.stats or {}
+        location = self._location_label(output)
+
+        if output.module == "flood":
+            very_high = float(stats.get("very_high_risk_pct", 0) or 0)
+            high = float(stats.get("high_risk_pct", 0) or 0)
+            if (very_high + high) > 30:
+                return (
+                    f"{location} shows significant flood exposure, with {very_high + high:.0f}% of the "
+                    "area in the High or Very High risk classes. This is not a situation to monitor and "
+                    "wait — it calls for action now: prioritise drainage and flood-control works in the "
+                    "worst-hit areas, review evacuation and early-warning plans with the communities "
+                    "living there, and factor this risk into any new building or infrastructure approvals. "
+                    "This area needs intervention."
+                )
+            return (
+                f"{location} currently shows limited flood exposure, so no emergency response is needed "
+                "right now. Still, it is worth keeping an eye on the areas flagged as Medium or High risk "
+                "on the map, especially ahead of the rainy season, and making sure drainage infrastructure "
+                "in those pockets is maintained."
+            )
+
+        if output.module == "food_security":
+            high_risk = float(stats.get("high_risk_pct", 0) or 0)
+            if high_risk > 33:
+                return (
+                    f"{location} shows widespread food insecurity pressure, with {high_risk:.0f}% of the "
+                    "area classified High Risk. This calls for action now: prioritise this area for food "
+                    "assistance and agricultural support programming, and share these findings with local "
+                    "food security committees so response planning can start immediately. This area needs "
+                    "intervention."
+                )
+            return (
+                f"{location} shows localised or moderate food insecurity pressure. No emergency response "
+                "is needed area-wide, but the High Risk pockets on the map are worth watching closely and "
+                "including in the next round of food security monitoring."
+            )
+
+        if output.module == "disease":
+            high_risk = float(stats.get("high_risk_pct", 0) or 0)
+            n_clusters = int(stats.get("n_hotspot_clusters") or 0)
+            if high_risk > 30 or n_clusters >= 1:
+                cluster_note = (
+                    f" with {n_clusters} identified hotspot cluster(s)" if n_clusters else ""
+                )
+                return (
+                    f"{location} shows meaningful climate-driven disease risk{cluster_note}. This calls "
+                    "for action now: alert local health authorities to the High Risk areas on the map, "
+                    "prioritise vector-control and surveillance resources there, and share these findings "
+                    "with community health workers so they can target outreach. This area needs "
+                    "intervention."
+                )
+            return (
+                f"{location} currently shows low climate-driven disease risk. No emergency response is "
+                "needed, but it is worth sharing this map with local health authorities as part of routine "
+                "seasonal surveillance planning."
+            )
+
+        if output.module == "land_degradation":
+            degraded = float(stats.get("degraded_label_pct", 0) or 0)
+            mk_sig = bool(stats.get("mk_significant", False))
+            if degraded > 30 or mk_sig:
+                trend_note = (
+                    " confirmed by a statistically significant long-term decline" if mk_sig else ""
+                )
+                return (
+                    f"{location} shows meaningful land degradation{trend_note}. This calls for action "
+                    "now: prioritise the Degraded areas on the map for restoration programming — "
+                    "reseeding, erosion control, or grazing management — and involve the communities "
+                    "farming or grazing that land in planning the response. This area needs intervention."
+                )
+            return (
+                f"{location} currently shows limited land degradation. No emergency response is needed, "
+                "but it is worth re-checking this area periodically to catch any decline early, before it "
+                "becomes harder and more costly to reverse."
+            )
+
+        if output.module == "drought":
+            latest_cdi = stats.get("latest_mean_cdi", stats.get("mean_cdi"))
+            if isinstance(latest_cdi, int | float) and latest_cdi < 0.65:
+                return (
+                    f"{location} is currently experiencing severe to extreme drought conditions. This "
+                    "calls for action now: activate drought contingency plans, prioritise water trucking "
+                    "and emergency water points for the worst-affected communities, and coordinate with "
+                    "livestock and food security actors, since drought impacts rarely stay contained to "
+                    "one sector. This area needs intervention."
+                )
+            return (
+                f"{location} is not currently in severe drought, so no emergency response is needed. It "
+                "is still worth tracking the forecast and the areas showing early signs of dryness on the "
+                "map, so a response can start early if conditions worsen."
+            )
+
+        return (
+            f"Review the risk map and statistics above for {location} with local stakeholders, and use "
+            "them to prioritise where attention and resources are needed first."
+        )
+
+    def _add_call_to_action(self, story: list, output: AnalysisOutput) -> None:
+        S = self._styles
+        self._add_rule(story)
+        story.append(Paragraph("Call to Action: After All This, What Next?", S["section_heading"]))
+        story.append(Paragraph(self._call_to_action(output), S["body"]))
+        story.append(Spacer(1, 0.3 * cm))
 
     def _add_ai_section(self, story: list, interpretation: str) -> None:
         S = self._styles
