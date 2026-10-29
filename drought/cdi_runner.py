@@ -196,6 +196,24 @@ def _yearly_drought_maps_xee_v1(
         .select("NDVI")
     )
 
+    # An empty ee.ImageCollection handed to xr.open_dataset(engine="ee", ...)
+    # doesn't fail cleanly — xee's lazy array shape computation blows up with
+    # an opaque "ValueError: __len__() should return >= 0" instead of any
+    # message naming the real cause (no imagery for this area/date range).
+    # Checked explicitly so this surfaces as the same recognized
+    # "imagery was available" error analysis_service._raise_data_availability_error
+    # already translates into a friendly, actionable response — confirmed live
+    # for Borena District, Ethiopia, drought analysis.
+    missing = []
+    if era5_collection.size().getInfo() == 0:
+        missing.append("ERA5-Land precipitation/temperature")
+    if modis_collection.size().getInfo() == 0:
+        missing.append("MODIS NDVI")
+    if missing:
+        raise ValueError(
+            f"No {' or '.join(missing)} imagery was available for this area and date range."
+        )
+
     era5 = _normalize_spatial_coords(
         xr.open_dataset(era5_collection, engine="ee", chunks=chunks, **grid)
     )

@@ -1,13 +1,15 @@
 """Compatibility tests for the xee-backed drought map loader."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import pytest
 import xarray as xr
 
 from climate_change.drought.cdi_runner import (
     _adaptive_grid_scale,
     _normalize_spatial_coords,
     _yearly_drought_maps,
+    _yearly_drought_maps_xee_v1,
 )
 
 
@@ -69,3 +71,67 @@ class TestAdaptiveGridScale:
 
     def test_degenerate_bbox_falls_back_to_default(self):
         assert _adaptive_grid_scale([36.9, -1.2, 36.9, -1.2]) == 0.1
+
+
+class TestYearlyDroughtMapsXeeV1EmptyCollectionGuard:
+    """An empty ee.ImageCollection handed to xr.open_dataset(engine="ee", ...)
+    doesn't fail cleanly — it raises an opaque "ValueError: __len__() should
+    return >= 0" from deep inside xee instead of anything naming the real
+    cause. Confirmed live for Borena District, Ethiopia: ERA5/MODIS had no
+    imagery for the requested date range, and the raw xee crash surfaced as
+    a generic 500 to the user instead of the app's existing friendly
+    "no imagery was available" message. These tests confirm the explicit
+    .size().getInfo() check added ahead of xr.open_dataset catches this
+    before xee ever sees the empty collection."""
+
+    @staticmethod
+    def _mock_collection(size):
+        collection = MagicMock()
+        collection.filterDate.return_value = collection
+        collection.filterBounds.return_value = collection
+        collection.select.return_value = collection
+        collection.size.return_value.getInfo.return_value = size
+        return collection
+
+    def test_raises_recognized_error_when_era5_empty(self):
+        era5 = self._mock_collection(0)
+        modis = self._mock_collection(10)
+
+        with (
+            patch("ee.ImageCollection", side_effect=[era5, modis]),
+            patch("ee.Geometry", return_value=MagicMock()),
+            patch("xee.helpers.fit_geometry", return_value={}),
+            patch("shapely.geometry.box", return_value=MagicMock()),
+            pytest.raises(ValueError, match="imagery was available"),
+        ):
+            _yearly_drought_maps_xee_v1({"type": "Polygon"}, [36.0, 1.0, 38.0, 3.0], 2005, 2023)
+
+    def test_raises_recognized_error_when_modis_empty(self):
+        era5 = self._mock_collection(10)
+        modis = self._mock_collection(0)
+
+        with (
+            patch("ee.ImageCollection", side_effect=[era5, modis]),
+            patch("ee.Geometry", return_value=MagicMock()),
+            patch("xee.helpers.fit_geometry", return_value={}),
+            patch("shapely.geometry.box", return_value=MagicMock()),
+            pytest.raises(ValueError, match="imagery was available"),
+        ):
+            _yearly_drought_maps_xee_v1({"type": "Polygon"}, [36.0, 1.0, 38.0, 3.0], 2005, 2023)
+
+    def test_guard_runs_before_open_dataset_when_both_collections_have_data(self):
+        """Confirms the new .size().getInfo() guard only short-circuits when a
+        collection is genuinely empty — with non-zero sizes it must fall
+        through to the existing xr.open_dataset-based pipeline untouched."""
+        era5 = self._mock_collection(10)
+        modis = self._mock_collection(10)
+
+        with (
+            patch("ee.ImageCollection", side_effect=[era5, modis]),
+            patch("ee.Geometry", return_value=MagicMock()),
+            patch("xee.helpers.fit_geometry", return_value={}),
+            patch("shapely.geometry.box", return_value=MagicMock()),
+            patch("xarray.open_dataset", side_effect=RuntimeError("reached open_dataset")),
+            pytest.raises(RuntimeError, match="reached open_dataset"),
+        ):
+            _yearly_drought_maps_xee_v1({"type": "Polygon"}, [36.0, 1.0, 38.0, 3.0], 2005, 2023)
