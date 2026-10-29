@@ -1,5 +1,6 @@
 """Tests for drought/cdi_runner.py — pure utility functions (no GEE)."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -13,6 +14,7 @@ from climate_change.drought.cdi_runner import (
     _temporally_fill_dataframe,
     build_drought_charts,
     compute_spatial_uncertainty,
+    export_cdi_cog,
 )
 
 # ── _classify_cdi_value ───────────────────────────────────────────────────────
@@ -243,3 +245,43 @@ class TestComputeSpatialUncertainty:
         for stat_key in ("temporal_std_stats", "component_spread_stats"):
             s = result[stat_key]
             assert s["min"] <= s["mean"] <= s["max"]
+
+
+# ── export_cdi_cog: filename collision avoidance ────────────────────────────────
+
+
+class TestExportCdiCogFilenameCollisionAvoidance:
+    """Two concurrent requests covering the same date range used to share a
+    single intermediate filename (drought_{start_year}_{end_year}) before the
+    caller's own cache-key rename step — whichever request lost that race
+    ended up with no file at all under its own name. Confirmed live:
+    repeated "Run Again" clicks on the same date range kept returning a
+    raster_path that was never actually written to disk. A per-call random
+    id in the prefix means two calls never collide, independent of timing."""
+
+    @staticmethod
+    def _fake_cdi_stack_to_cog(ds, output_dir, prefix, **kwargs):
+        return {"CDI": Path(output_dir) / f"{prefix}_CDI.tif"}
+
+    def test_two_calls_with_identical_inputs_never_collide(self):
+        features = {"cdi_maps": object(), "start_year": 2020, "end_year": 2025}
+
+        with patch(
+            "drought_monitoring.io.cdi_stack_to_cog", side_effect=self._fake_cdi_stack_to_cog
+        ):
+            paths1 = export_cdi_cog(features, output_dir="outputs")
+            paths2 = export_cdi_cog(features, output_dir="outputs")
+
+        assert paths1["CDI"] != paths2["CDI"]
+
+    def test_prefix_still_names_the_date_range(self):
+        features = {"cdi_maps": object(), "start_year": 2020, "end_year": 2025}
+
+        with patch(
+            "drought_monitoring.io.cdi_stack_to_cog", side_effect=self._fake_cdi_stack_to_cog
+        ) as mock_stack:
+            export_cdi_cog(features, output_dir="outputs")
+
+        _, kwargs = mock_stack.call_args
+        assert kwargs["prefix"].startswith("drought_")
+        assert kwargs["prefix"].endswith("_2020_2025")

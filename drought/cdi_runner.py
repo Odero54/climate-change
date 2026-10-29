@@ -1,4 +1,5 @@
 import logging
+import uuid
 from inspect import signature
 from pathlib import Path
 
@@ -630,7 +631,17 @@ def export_cdi_cog(
     from drought_monitoring.io import cdi_stack_to_cog
 
     ds = features["cdi_maps"]
-    prefix = f"drought_{features['start_year']}_{features['end_year']}"
+    # The date-range-only prefix (drought_{start_year}_{end_year}) is shared
+    # by every concurrent request covering the same years, regardless of
+    # AOI — two overlapping requests both write to the same intermediate
+    # filename before the caller's own cache-key rename, and whichever one
+    # loses the race ends up with no file at all under its own name
+    # (confirmed live: repeated "Run Again" clicks on the same date range
+    # produced a raster_path that was never actually written to disk). A
+    # per-call random component keeps every concurrent export writing to
+    # its own file from the start, independent of any caller-side rename.
+    run_id = uuid.uuid4().hex[:12]
+    prefix = f"drought_{run_id}_{features['start_year']}_{features['end_year']}"
     paths = cdi_stack_to_cog(ds, output_dir=output_dir, prefix=prefix)
     if aoi_geojson:
         paths = {key: _clip_cog_to_aoi(path, aoi_geojson) for key, path in paths.items()}
